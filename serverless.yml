@@ -11,15 +11,49 @@ package:
   patterns:
     - '!./**'
 
+# One bucket per micro frontend block, one CloudFront distribution in front of
+# all of them. Blocks are isolated at deploy time (a bad release only touches
+# its own bucket) but share a single origin, so the session in localStorage
+# and the cookies carry across.
 resources:
   Resources:
 
-    WebBucket:
+    SimulatorBucket:
       Type: AWS::S3::Bucket
       DeletionPolicy: Retain
       UpdateReplacePolicy: Retain
       Properties:
-        BucketName: cdts-${sls:stage}-frontend-web-${aws:accountId}
+        BucketName: cdts-${sls:stage}-frontend-simulator-${aws:accountId}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerEnforced
+
+    PortalBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BucketName: cdts-${sls:stage}-frontend-portal-${aws:accountId}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerEnforced
+
+    SigningBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BucketName: cdts-${sls:stage}-frontend-signing-${aws:accountId}
         PublicAccessBlockConfiguration:
           BlockPublicAcls: true
           BlockPublicPolicy: true
@@ -38,6 +72,16 @@ resources:
           SigningBehavior: always
           SigningProtocol: sigv4
 
+    SpaRouterFunction:
+      Type: AWS::CloudFront::Function
+      Properties:
+        Name: cdts-${sls:stage}-frontend-spa-router
+        AutoPublish: true
+        FunctionConfig:
+          Comment: Routes extensionless paths to the index.html of their block
+          Runtime: cloudfront-js-2.0
+        FunctionCode: ${file(./infra/function-code.js):spaRouter}
+
     CloudFrontDistribution:
       Type: AWS::CloudFront::Distribution
       Properties:
@@ -48,34 +92,58 @@ resources:
           HttpVersion: http2
           PriceClass: PriceClass_100
           Origins:
-            - Id: WebBucketOrigin
-              DomainName: !GetAtt WebBucket.RegionalDomainName
+            - Id: SimulatorOrigin
+              DomainName: !GetAtt SimulatorBucket.RegionalDomainName
               OriginAccessControlId: !GetAtt CloudFrontOAC.Id
               S3OriginConfig:
                 OriginAccessIdentity: ''
+            - Id: PortalOrigin
+              DomainName: !GetAtt PortalBucket.RegionalDomainName
+              OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+              S3OriginConfig:
+                OriginAccessIdentity: ''
+            - Id: SigningOrigin
+              DomainName: !GetAtt SigningBucket.RegionalDomainName
+              OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+              S3OriginConfig:
+                OriginAccessIdentity: ''
+          CacheBehaviors:
+            - PathPattern: /portal/*
+              TargetOriginId: PortalOrigin
+              ViewerProtocolPolicy: redirect-to-https
+              AllowedMethods: [GET, HEAD, OPTIONS]
+              CachedMethods: [GET, HEAD]
+              Compress: true
+              CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt SpaRouterFunction.FunctionARN
+            - PathPattern: /sign/*
+              TargetOriginId: SigningOrigin
+              ViewerProtocolPolicy: redirect-to-https
+              AllowedMethods: [GET, HEAD, OPTIONS]
+              CachedMethods: [GET, HEAD]
+              Compress: true
+              CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt SpaRouterFunction.FunctionARN
           DefaultCacheBehavior:
-            TargetOriginId: WebBucketOrigin
+            TargetOriginId: SimulatorOrigin
             ViewerProtocolPolicy: redirect-to-https
             AllowedMethods: [GET, HEAD, OPTIONS]
             CachedMethods: [GET, HEAD]
             Compress: true
             # CachingOptimized managed policy
             CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          CustomErrorResponses:
-            # SPA fallback: any 403/404 returns index.html with 200 so Angular routing works.
-            - ErrorCode: 403
-              ResponseCode: 200
-              ResponsePagePath: /index.html
-              ErrorCachingMinTTL: 10
-            - ErrorCode: 404
-              ResponseCode: 200
-              ResponsePagePath: /index.html
-              ErrorCachingMinTTL: 10
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt SpaRouterFunction.FunctionARN
 
-    WebBucketPolicy:
+    SimulatorBucketPolicy:
       Type: AWS::S3::BucketPolicy
       Properties:
-        Bucket: !Ref WebBucket
+        Bucket: !Ref SimulatorBucket
         PolicyDocument:
           Version: '2012-10-17'
           Statement:
@@ -84,7 +152,41 @@ resources:
               Principal:
                 Service: cloudfront.amazonaws.com
               Action: s3:GetObject
-              Resource: !Sub '${WebBucket.Arn}/*'
+              Resource: !Sub '${SimulatorBucket.Arn}/*'
+              Condition:
+                StringEquals:
+                  AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+    PortalBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref PortalBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: AllowCloudFrontRead
+              Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${PortalBucket.Arn}/*'
+              Condition:
+                StringEquals:
+                  AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
+    SigningBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref SigningBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: AllowCloudFrontRead
+              Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${SigningBucket.Arn}/*'
               Condition:
                 StringEquals:
                   AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
@@ -99,10 +201,18 @@ resources:
         Value: !Sub 'https://${CloudFrontDistribution.DomainName}'
 
   Outputs:
-    WebBucketName:
-      Value: !Ref WebBucket
+    SimulatorBucketName:
+      Value: !Ref SimulatorBucket
       Export:
-        Name: cdts-${sls:stage}-frontend-bucket
+        Name: cdts-${sls:stage}-frontend-simulator-bucket
+    PortalBucketName:
+      Value: !Ref PortalBucket
+      Export:
+        Name: cdts-${sls:stage}-frontend-portal-bucket
+    SigningBucketName:
+      Value: !Ref SigningBucket
+      Export:
+        Name: cdts-${sls:stage}-frontend-signing-bucket
     CloudFrontDistributionId:
       Value: !Ref CloudFrontDistribution
       Export:
