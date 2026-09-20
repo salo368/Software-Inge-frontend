@@ -2,6 +2,9 @@ name: Deploy
 
 # Shared by deploy-dev.yml and deploy-pro.yml. The two stages differ only in the
 # GitHub Environment they draw credentials from.
+#
+# Each micro frontend block builds and ships on its own, so a release of one
+# block never touches another block's bucket or cache.
 
 on:
   workflow_call:
@@ -13,21 +16,78 @@ on:
         required: false
         type: boolean
         default: false
+      block:
+        description: Deploy a single block, or __all__ for every one.
+        required: false
+        type: string
+        default: ''
 
 jobs:
-  deploy:
-    name: Deploy (${{ inputs.stage }})
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment:
-      name: ${{ inputs.stage }}
-      url: ${{ steps.urls.outputs.domain }}
-
+    timeout-minutes: 5
+    outputs:
+      blocks: ${{ steps.plan.outputs.blocks }}
+      count: ${{ steps.plan.outputs.count }}
+      infra: ${{ steps.plan.outputs.infra }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Compute plan
+        id: plan
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          MANUAL_BLOCK: ${{ inputs.block }}
+          FORCE_INFRA: ${{ inputs.force_infra && '1' || '0' }}
+        run: bash scripts/ci/plan-deploy.sh
+
+  validate:
+    name: Validate
+    needs: plan
+    if: needs.plan.outputs.count != '0' || needs.plan.outputs.infra == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Test the edge router
+        # A bug here sends a block's deep links to another block's origin.
+        run: node --test infra/
+
+      - name: Build every block
+        # Blocks deploy independently, but a shared change must not break any
+        # of them, so all three are compiled regardless of the plan.
+        run: |
+          for block in simulator portal signing; do
+            echo "::group::build ${block}"
+            npx ng build "${block}" --configuration ${{ inputs.stage }}
+            echo "::endgroup::"
+          done
+
+  infra:
+    name: Infra (S3 + CloudFront)
+    needs: [plan, validate]
+    if: needs.plan.outputs.infra == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.stage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,44 +102,54 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Verify AWS identity
-        run: aws sts get-caller-identity
-
       - name: Install dependencies
         # npm install (not ci): Angular's lock file has multiple versions of
         # chokidar/readdirp in the tree; npm ci rejects it as inconsistent.
         run: npm install --no-audit --no-fund --prefer-offline
 
-      - name: Decide whether the stack needs a deploy
-        id: infra
-        env:
-          STAGE: ${{ inputs.stage }}
-          FORCE: ${{ inputs.force_infra }}
-          BEFORE: ${{ github.event.before }}
-        run: |
-          needed=0
-          reason=""
-          if [ "${FORCE}" = "true" ]; then
-            needed=1; reason="forced by dispatch"
-          elif ! aws cloudformation describe-stacks --stack-name "cdts-${STAGE}-frontend" >/dev/null 2>&1; then
-            needed=1; reason="stack does not exist yet"
-          elif [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ] \
-               || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            needed=1; reason="no usable diff base"
-          elif git diff --name-only "${BEFORE}" HEAD | grep -qx 'serverless.yml'; then
-            needed=1; reason="serverless.yml changed"
-          else
-            reason="only app code changed"
-          fi
-          echo "needed=${needed}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Infra deploy: ${needed} (${reason})"
-
-      - name: Deploy infra (S3 + CloudFront)
-        if: steps.infra.outputs.needed == '1'
+      - name: Deploy stack
         run: npx serverless deploy --stage ${{ inputs.stage }} --verbose
 
-      - name: Build Angular
-        run: npx ng build --configuration ${{ inputs.stage }}
+  deploy:
+    name: ${{ matrix.block }}
+    needs: [plan, validate, infra]
+    if: always() && needs.plan.outputs.count != '0' && needs.validate.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.stage }}
+      url: ${{ steps.urls.outputs.domain }}
+    strategy:
+      fail-fast: false
+      matrix:
+        block: ${{ fromJSON(needs.plan.outputs.blocks) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Resolve block coordinates
+        id: block
+        run: bash scripts/ci/block-info.sh "${{ matrix.block }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: npx ng build ${{ matrix.block }} --configuration ${{ inputs.stage }}
 
       - name: Read stack outputs
         id: urls
@@ -89,7 +159,7 @@ jobs:
               --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
           }
           {
-            echo "bucket=$(get WebBucketName)"
+            echo "bucket=$(get '${{ steps.block.outputs.BUCKET_OUTPUT }}')"
             echo "dist_id=$(get CloudFrontDistributionId)"
             echo "domain=https://$(get CloudFrontDomainName)"
           } >> "$GITHUB_OUTPUT"
@@ -98,14 +168,16 @@ jobs:
         env:
           BUCKET: ${{ steps.urls.outputs.bucket }}
           DIST_ID: ${{ steps.urls.outputs.dist_id }}
+          DIST_DIR: ${{ steps.block.outputs.DIST_DIR }}
+          PREFIX: ${{ steps.block.outputs.PREFIX }}
         run: bash scripts/ci/deploy.sh
 
       - name: Summary
         if: always()
         run: |
           {
-            echo "### Deploy ${{ inputs.stage }}"
+            echo "### ${{ matrix.block }} (${{ inputs.stage }})"
             echo ""
-            echo "- Infra deploy: **${{ steps.infra.outputs.needed == '1' && 'yes' || 'skipped' }}**"
-            echo "- URL: ${{ steps.urls.outputs.domain }}"
+            echo "- URL: ${{ steps.urls.outputs.domain }}/${{ steps.block.outputs.PREFIX }}"
+            echo "- Bucket: \`${{ steps.urls.outputs.bucket }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -9,6 +9,10 @@ on:
         description: "Run `sls deploy` even if serverless.yml did not change"
         type: boolean
         default: false
+      block:
+        description: "Deploy one block only (simulator, portal, signing) or __all__"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -23,4 +27,5 @@ jobs:
     with:
       stage: dev
       force_infra: ${{ inputs.force_infra == true }}
+      block: ${{ inputs.block }}
     secrets: inherit

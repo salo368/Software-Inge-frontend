@@ -3,38 +3,33 @@
   "version": 1,
   "newProjectRoot": "projects",
   "projects": {
-    "cdts-frontend": {
+    "simulator": {
       "projectType": "application",
-      "schematics": {},
-      "root": "",
-      "sourceRoot": "src",
+      "root": "projects/simulator",
+      "sourceRoot": "projects/simulator/src",
       "prefix": "app",
       "architect": {
         "build": {
           "builder": "@angular-devkit/build-angular:application",
           "options": {
-            "outputPath": "dist/cdts-frontend",
-            "index": "src/index.html",
-            "browser": "src/main.ts",
+            "outputPath": "dist/simulator",
+            "index": "projects/simulator/src/index.html",
+            "browser": "projects/simulator/src/main.ts",
+            "baseHref": "/",
             "polyfills": [
               "zone.js"
             ],
-            "tsConfig": "tsconfig.app.json",
+            "tsConfig": "projects/simulator/tsconfig.app.json",
             "assets": [
               {
                 "glob": "**/*",
                 "input": "public"
-              },
-              {
-                "glob": "pdf.worker.min.mjs",
-                "input": "node_modules/pdfjs-dist/build",
-                "output": "assets"
               }
             ],
             "styles": [
               "node_modules/bootstrap/dist/css/bootstrap.min.css",
               "node_modules/bootstrap-icons/font/bootstrap-icons.css",
-              "src/styles.css"
+              "projects/simulator/src/styles.css"
             ],
             "scripts": [
               "node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"
@@ -44,8 +39,8 @@
             "pro": {
               "fileReplacements": [
                 {
-                  "replace": "src/environments/environment.ts",
-                  "with": "src/environments/environment.pro.ts"
+                  "replace": "projects/shared/src/environments/environment.ts",
+                  "with": "projects/shared/src/environments/environment.pro.ts"
                 }
               ],
               "budgets": [
@@ -73,38 +68,174 @@
         },
         "serve": {
           "builder": "@angular-devkit/build-angular:dev-server",
+          "options": {
+            "port": 4200
+          },
           "configurations": {
             "pro": {
-              "buildTarget": "cdts-frontend:build:pro"
+              "buildTarget": "simulator:build:pro"
             },
             "dev": {
-              "buildTarget": "cdts-frontend:build:dev"
+              "buildTarget": "simulator:build:dev"
+            }
+          },
+          "defaultConfiguration": "dev"
+        }
+      }
+    },
+    "portal": {
+      "projectType": "application",
+      "root": "projects/portal",
+      "sourceRoot": "projects/portal/src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/portal",
+            "index": "projects/portal/src/index.html",
+            "browser": "projects/portal/src/main.ts",
+            "baseHref": "/portal/",
+            "polyfills": [
+              "zone.js"
+            ],
+            "tsConfig": "projects/portal/tsconfig.app.json",
+            "assets": [],
+            "styles": [
+              "node_modules/bootstrap/dist/css/bootstrap.min.css",
+              "node_modules/bootstrap-icons/font/bootstrap-icons.css",
+              "projects/portal/src/styles.css"
+            ],
+            "scripts": [
+              "node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"
+            ]
+          },
+          "configurations": {
+            "pro": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/shared/src/environments/environment.ts",
+                  "with": "projects/shared/src/environments/environment.pro.ts"
+                }
+              ],
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "800kB",
+                  "maximumError": "1.5MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kB",
+                  "maximumError": "10kB"
+                }
+              ],
+              "outputHashing": "all"
+            },
+            "dev": {
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
             }
           },
           "defaultConfiguration": "dev"
         },
-        "extract-i18n": {
-          "builder": "@angular-devkit/build-angular:extract-i18n"
-        },
-        "test": {
-          "builder": "@angular-devkit/build-angular:karma",
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
           "options": {
+            "port": 4201
+          },
+          "configurations": {
+            "pro": {
+              "buildTarget": "portal:build:pro"
+            },
+            "dev": {
+              "buildTarget": "portal:build:dev"
+            }
+          },
+          "defaultConfiguration": "dev"
+        }
+      }
+    },
+    "signing": {
+      "projectType": "application",
+      "root": "projects/signing",
+      "sourceRoot": "projects/signing/src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/signing",
+            "index": "projects/signing/src/index.html",
+            "browser": "projects/signing/src/main.ts",
+            "baseHref": "/sign/",
             "polyfills": [
-              "zone.js",
-              "zone.js/testing"
+              "zone.js"
             ],
-            "tsConfig": "tsconfig.spec.json",
+            "tsConfig": "projects/signing/tsconfig.app.json",
             "assets": [
               {
-                "glob": "**/*",
-                "input": "public"
+                "glob": "pdf.worker.min.mjs",
+                "input": "node_modules/pdfjs-dist/build",
+                "output": "assets"
               }
             ],
             "styles": [
-              "src/styles.css"
+              "node_modules/bootstrap/dist/css/bootstrap.min.css",
+              "node_modules/bootstrap-icons/font/bootstrap-icons.css",
+              "projects/signing/src/styles.css"
             ],
-            "scripts": []
-          }
+            "scripts": [
+              "node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"
+            ]
+          },
+          "configurations": {
+            "pro": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/signing/src/environments/environment.ts",
+                  "with": "projects/signing/src/environments/environment.pro.ts"
+                }
+              ],
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "800kB",
+                  "maximumError": "1.5MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kB",
+                  "maximumError": "10kB"
+                }
+              ],
+              "outputHashing": "all"
+            },
+            "dev": {
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
+            }
+          },
+          "defaultConfiguration": "dev"
+        },
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
+          "options": {
+            "port": 4202
+          },
+          "configurations": {
+            "pro": {
+              "buildTarget": "signing:build:pro"
+            },
+            "dev": {
+              "buildTarget": "signing:build:dev"
+            }
+          },
+          "defaultConfiguration": "dev"
         }
       }
     }
