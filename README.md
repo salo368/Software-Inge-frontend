@@ -1,7 +1,11 @@
-# CDTS · Frontend
+# Proyecto Ingeniería de Software · Frontend
 
-SPA en **Angular 18** para la plataforma de CDTs: simulador de tasas, apertura de
-procesos, carga de documentos y ceremonia de firma electronica.
+> **Ejercicio academico** de la Pontificia Universidad Javeriana. No es un producto
+> real ni esta asociado a ninguna empresa; existe para practicar Angular, despliegue
+> en CloudFront y buenas practicas de repositorio.
+
+SPA en **Angular 18**: simulador, apertura de procesos, carga de documentos y
+ceremonia de firma electronica.
 
 Consume las APIs del backend, que vive en un repo aparte:
 [`salo368/Software-Inge-backend`](https://github.com/salo368/Software-Inge-backend).
