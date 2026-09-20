@@ -1,0 +1,26 @@
+name: Deploy PRO
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_infra:
+        description: "Run `sls deploy` even if serverless.yml did not change"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-pro
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy.yml
+    with:
+      stage: pro
+      force_infra: ${{ inputs.force_infra == true }}
+    secrets: inherit

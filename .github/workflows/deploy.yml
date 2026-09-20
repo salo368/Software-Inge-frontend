@@ -1,0 +1,111 @@
+name: Deploy
+
+# Shared by deploy-dev.yml and deploy-pro.yml. The two stages differ only in the
+# GitHub Environment they draw credentials from.
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        required: true
+        type: string
+      force_infra:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: Deploy (${{ inputs.stage }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: ${{ inputs.stage }}
+      url: ${{ steps.urls.outputs.domain }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Install dependencies
+        # npm install (not ci): Angular's lock file has multiple versions of
+        # chokidar/readdirp in the tree; npm ci rejects it as inconsistent.
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Decide whether the stack needs a deploy
+        id: infra
+        env:
+          STAGE: ${{ inputs.stage }}
+          FORCE: ${{ inputs.force_infra }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          needed=0
+          reason=""
+          if [ "${FORCE}" = "true" ]; then
+            needed=1; reason="forced by dispatch"
+          elif ! aws cloudformation describe-stacks --stack-name "cdts-${STAGE}-frontend" >/dev/null 2>&1; then
+            needed=1; reason="stack does not exist yet"
+          elif [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ] \
+               || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            needed=1; reason="no usable diff base"
+          elif git diff --name-only "${BEFORE}" HEAD | grep -qx 'serverless.yml'; then
+            needed=1; reason="serverless.yml changed"
+          else
+            reason="only app code changed"
+          fi
+          echo "needed=${needed}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Infra deploy: ${needed} (${reason})"
+
+      - name: Deploy infra (S3 + CloudFront)
+        if: steps.infra.outputs.needed == '1'
+        run: npx serverless deploy --stage ${{ inputs.stage }} --verbose
+
+      - name: Build Angular
+        run: npx ng build --configuration ${{ inputs.stage }}
+
+      - name: Read stack outputs
+        id: urls
+        run: |
+          get() {
+            aws cloudformation describe-stacks --stack-name "cdts-${{ inputs.stage }}-frontend" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          {
+            echo "bucket=$(get WebBucketName)"
+            echo "dist_id=$(get CloudFrontDistributionId)"
+            echo "domain=https://$(get CloudFrontDomainName)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to S3 and invalidate CloudFront
+        env:
+          BUCKET: ${{ steps.urls.outputs.bucket }}
+          DIST_ID: ${{ steps.urls.outputs.dist_id }}
+        run: bash scripts/ci/deploy.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy ${{ inputs.stage }}"
+            echo ""
+            echo "- Infra deploy: **${{ steps.infra.outputs.needed == '1' && 'yes' || 'skipped' }}**"
+            echo "- URL: ${{ steps.urls.outputs.domain }}"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,20 @@
+# CODEOWNERS
+#
+# Cualquier PR que toque las rutas de abajo requiere review del owner listado.
+# El codigo de la SPA (src/**) queda libre para colaboradores.
+#
+# Ver: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# CI/CD y scripts de deploy.
+/.github/            @salo368
+/scripts/            @salo368
+
+# Infra y configuracion del proyecto.
+/serverless.yml      @salo368
+/angular.json        @salo368
+/package.json        @salo368
+/package-lock.json   @salo368
+/tsconfig*.json      @salo368
+/.nvmrc              @salo368
+/README.md           @salo368
+/.gitignore          @salo368
