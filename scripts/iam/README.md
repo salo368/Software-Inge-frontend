@@ -26,19 +26,26 @@ verdad. Esta acotada a lo que el stack necesita y nada mas:
 
 - **CloudFormation** solo sobre stacks `cdts-*-frontend`. Las acciones de listado
   y `ValidateTemplate` van sin scope porque AWS no las soporta a nivel de recurso.
-- **S3** solo sobre buckets `cdts-*-frontend*`. El patron cubre dos: el bucket web
-  (`cdts-<stage>-frontend-web-<accountId>`) y el bucket de deployment que
-  Serverless crea dentro del propio stack.
+- **S3** solo sobre buckets `cdts-*-frontend*`. El patron cubre el bucket de cada
+  bloque (`cdts-<stage>-frontend-{simulator,portal,signing}-<accountId>`) y el de
+  deployment que Serverless crea dentro del propio stack.
 - **CloudFront** sin scope de recurso: el id de la distribucion solo se conoce
   despues de crearla, asi que no hay ARN que escribir de antemano. Es aceptable
-  porque CloudFront no lo usa nadie mas en la cuenta.
+  porque CloudFront no lo usa nadie mas en la cuenta. Incluye las acciones de
+  **CloudFront Functions**, que es lo que compone los bloques en el edge.
 - **SSM** solo sobre `/cdts/*/frontend/*`, que es el parametro donde el stack
   publica su URL para que el backend arme enlaces absolutos.
 - **Sin permisos IAM.** El stack no crea roles porque no tiene Lambdas, asi que
   este usuario no necesita tocar IAM en absoluto.
 - **Deny explicito** sobre Lambda, API Gateway, RDS, Rekognition e IAM: aunque
   los Allow de arriba ya no los conceden, el Deny deja por escrito que este
-  usuario no puede desplegar backend ni crearse credenciales.
+  usuario no puede desplegar backend ni crearse credenciales. Nota que esto
+  descarta Lambda@Edge: la composicion usa CloudFront Functions, que son un
+  servicio distinto y no caen bajo `lambda:*`.
+
+> Editar el JSON **no cambia nada en AWS**. Hay que publicar una version nueva
+> de la policy (ver abajo); si no, el deploy falla con `AccessDenied` sobre la
+> accion que se acaba de agregar.
 
 ## Reproducibilidad
 
