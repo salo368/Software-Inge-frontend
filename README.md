@@ -150,11 +150,14 @@ Los artefactos quedan en `dist/<bloque>/browser/`.
 
 ## Deploy
 
-Va por GitHub Actions: push a `develop` despliega `dev`, push a `main` despliega
-`pro`. Ambos workflows delegan en
-[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml), que copia la
-forma del pipeline del backend: `plan → validate → infrastructure → blocks →
-summary`.
+Va por GitHub Actions: push a `develop` despliega `dev` (workflow
+[`deploy-dev.yml`](./.github/workflows/deploy-dev.yml)), push a `main`
+despliega `pro` (workflow [`deploy-pro.yml`](./.github/workflows/deploy-pro.yml)).
+Los dos workflows contienen la pipeline **inline** (misma convención que
+backend: cada stage tiene su propio archivo con `stage` hardcodeado, y ambos
+comparten [`block-package.yml`](./.github/workflows/block-package.yml) como
+subworkflow reusable por bloque en el matrix). Forma:
+`plan → validate → infrastructure → blocks[matrix] → summary`.
 
 1. **Plan** — [`scripts/ci/plan-deploy.sh`](./scripts/ci/plan-deploy.sh) mira el
    diff (anclado al **ultimo deploy exitoso** de este workflow en la rama, no al
@@ -166,11 +169,30 @@ summary`.
    solo ese; cambios en docs, ninguno.
 2. **Validate** — corre los tests del router del edge y compila los tres bloques
    como sanity workspace-wide. Si falla, no se despliega nada.
-3. **Infrastructure** — `sls deploy` del stack compartido (CloudFront + S3 por
-   bloque + edge function). Solo si el plan asi lo pidio (`serverless.yml` o
-   `infra/**` cambiaron, o `force_infra: true`). Es el paso lento (CloudFront
-   puede tardar varios minutos en converger), asi que los cambios de codigo se
-   lo saltan.
+3. **Infrastructure** — `sls deploy` del stack compartido. Solo si el plan
+   asi lo pidio (`serverless.yml` o `infra/**` cambiaron, o
+   `force_infra: true`). Es el paso lento (CloudFront puede tardar varios
+   minutos en converger), asi que los cambios de codigo se lo saltan.
+
+   **Que despliega exactamente** (analogo a `Infrastructure` del backend,
+   pero mas pequeno):
+
+   - **CloudFront distribution** unica, compartida por los tres bloques.
+   - **Tres buckets S3** (`simulator`, `portal`, `signing`) — uno por
+     bloque, cada `Deploy` de bloque sube su bundle al suyo.
+   - **CloudFront Function [`infra/spa-router.js`](./infra/spa-router.js)**
+     (edge): reescribe deep links a `/<block>/index.html` para que un
+     refresh dentro de `/sign/xyz` no explote en el bucket equivocado.
+   - **Cache behaviors + IAM**: `/` → simulator, `/portal/*` → portal,
+     `/sign/*` → signing.
+   - **SSM `/cdts/{stage}/frontend/url`**: el backend lo lee para armar
+     enlaces absolutos `/sign/{sign_id}` en los emails de firma.
+
+   Diferencia con backend: aca la Infrastructure NO tiene contenido que
+   sincronizar (nada de SQL a aplicar, nada de assets estaticos que
+   subir aparte). Los bundles JS/CSS los sube cada bloque en su
+   propio `Deploy` job. Por eso es un solo `sls deploy` y ya, sin los
+   sub-steps `deploy + apply` / `deploy + sync` que tiene backend.
 4. **Blocks** — matrix, un call a
    [`.github/workflows/block-package.yml`](./.github/workflows/block-package.yml)
    por bloque. Cada bloque corre en paralelo con su propia cadena

@@ -6,29 +6,304 @@ on:
   workflow_dispatch:
     inputs:
       force_infra:
-        description: "Run `sls deploy` even if serverless.yml did not change"
+        description: "Run `sls deploy` even if serverless.yml / infra/** did not change"
         type: boolean
         default: false
       block:
-        description: "Deploy one block only (simulator, portal, signing) or __all__"
+        description: "Manual override: empty=auto-detect, __all__=full deploy, or a single block name (simulator, portal, signing)."
         type: string
         default: ''
 
 permissions:
   contents: read
-  # Needed by the Plan job in deploy.yml so it can query
-  # `gh run list` for the last successful deploy SHA.
+  # actions:read is needed by the Plan job to run `gh run list --workflow=...`
+  # so it can find the SHA of the last successful deploy.
   actions: read
 
 concurrency:
   group: deploy-pro
   cancel-in-progress: false
 
+# Pipeline shape (identical to deploy-dev.yml modulo the hardcoded stage
+# and the fact that integration is a dev-only lane; the block package
+# itself gates integration on `inputs.stage == 'dev'`, so it silently
+# skips here). Inlined on purpose so the GitHub UI renders jobs at the
+# top level (`Plan`, `signing / Deploy`, ...) matching backend exactly.
+
 jobs:
-  deploy:
-    uses: ./.github/workflows/deploy.yml
-    with:
-      stage: pro
-      force_infra: ${{ inputs.force_infra == true }}
-      block: ${{ inputs.block }}
+  # --------------------------------------------------------------------------
+  # 1) plan
+  # --------------------------------------------------------------------------
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      blocks_to_deploy: ${{ steps.plan.outputs.blocks_to_deploy }}
+      blocks_count: ${{ steps.plan.outputs.blocks_count }}
+      run_infrastructure: ${{ steps.plan.outputs.run_infrastructure }}
+      transversal: ${{ steps.plan.outputs.transversal }}
+      total_count: ${{ steps.plan.outputs.total_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find last successful deploy SHA
+        id: last-successful
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sha="$(gh run list \
+            --workflow="${GITHUB_WORKFLOW}" \
+            --branch="${GITHUB_REF_NAME}" \
+            --status=success \
+            --limit=1 \
+            --json headSha \
+            -q '.[0].headSha // empty' 2>/dev/null || true)"
+          if [ -n "${sha}" ]; then
+            echo "== last successful deploy on ${GITHUB_REF_NAME}: ${sha}"
+          else
+            echo "== no previous successful deploy on ${GITHUB_REF_NAME}, will fall back to GITHUB_EVENT_BEFORE"
+          fi
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Compute deploy plan
+        id: plan
+        env:
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          LAST_SUCCESSFUL_DEPLOY_SHA: ${{ steps.last-successful.outputs.sha }}
+          MANUAL_BLOCK: ${{ inputs.block }}
+          FORCE_INFRA: ${{ inputs.force_infra && '1' || '0' }}
+        run: bash scripts/ci/plan-deploy.sh
+
+  # --------------------------------------------------------------------------
+  # 2) validate
+  # --------------------------------------------------------------------------
+  validate:
+    name: Validate
+    needs: plan
+    if: needs.plan.outputs.total_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Test the edge router
+        run: node --test infra/
+
+      - name: Build every block (workspace sanity)
+        run: |
+          set -euo pipefail
+          for block in $(node -p "Object.keys(require('./angular.json').projects).filter(n => n !== 'shared').join('\n')"); do
+            echo "::group::build ${block}"
+            npx ng build "${block}" --configuration pro
+            echo "::endgroup::"
+          done
+
+  # --------------------------------------------------------------------------
+  # 3) infrastructure -- see deploy-dev.yml for the full explanation of
+  #    what lives here (CloudFront + S3 + edge fn + SSM).
+  # --------------------------------------------------------------------------
+  infrastructure:
+    name: Infrastructure
+    needs: [plan, validate]
+    if: needs.plan.outputs.run_infrastructure == 'true' && needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: pro
+      url: https://console.aws.amazon.com/cloudformation/home?region=${{ vars.AWS_REGION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Deploy stack
+        id: serverless
+        run: npx serverless deploy --stage pro --verbose
+
+      - name: Record infrastructure status
+        if: always()
+        run: |
+          mkdir -p /tmp/status
+          cat > /tmp/status/infrastructure.json <<EOF
+          {
+            "planned": "${{ needs.plan.outputs.run_infrastructure }}",
+            "transversal_trigger": "${{ needs.plan.outputs.transversal }}",
+            "deploy": "${{ steps.serverless.outcome }}"
+          }
+          EOF
+          cat /tmp/status/infrastructure.json
+
+      - name: Upload infrastructure status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrastructure-status
+          path: /tmp/status/infrastructure.json
+          retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # 4) blocks: matrix per block. Integration is dev-only and is silently
+  #    skipped inside block-package.yml when stage != 'dev'.
+  # --------------------------------------------------------------------------
+  blocks:
+    name: ${{ matrix.block }}
+    needs: [plan, validate, infrastructure]
+    if: >
+      always() &&
+      needs.plan.outputs.blocks_count != '0' &&
+      needs.validate.result == 'success' &&
+      (needs.infrastructure.result == 'success' || needs.infrastructure.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        block: ${{ fromJSON(needs.plan.outputs.blocks_to_deploy) }}
+    uses: ./.github/workflows/block-package.yml
     secrets: inherit
+    with:
+      block: ${{ matrix.block }}
+      stage: pro
+
+  # --------------------------------------------------------------------------
+  # 5) summary
+  # --------------------------------------------------------------------------
+  summary:
+    name: Deploy summary
+    needs: [plan, validate, infrastructure, blocks]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all status artifacts
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-status*"
+          path: /tmp/status-in
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Render summary
+        run: |
+          ico() {
+            case "$1" in
+              success)   echo "✅" ;;
+              failure)   echo "❌" ;;
+              cancelled) echo "🛑" ;;
+              skipped)   echo "⏭️" ;;
+              "")        echo "—" ;;
+              *)         echo "$1" ;;
+            esac
+          }
+
+          {
+            echo "## Deploy PRO"
+            echo ""
+            echo "**Plan**"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Blocks to deploy    | \`${{ needs.plan.outputs.blocks_to_deploy }}\` |"
+            echo "| Run infrastructure  | ${{ needs.plan.outputs.run_infrastructure }} |"
+            echo "| Transversal change  | ${{ needs.plan.outputs.transversal }} |"
+            echo ""
+            echo "**Stage results**"
+            echo ""
+            echo "| Stage | Result |"
+            echo "|---|---|"
+            echo "| Validate       | $(ico '${{ needs.validate.result }}') ${{ needs.validate.result }} |"
+            echo "| Infrastructure | $(ico '${{ needs.infrastructure.result }}') ${{ needs.infrastructure.result }} |"
+            echo "| Blocks         | $(ico '${{ needs.blocks.result }}') ${{ needs.blocks.result }} |"
+            echo ""
+
+            if [ -f /tmp/status-in/infrastructure.json ]; then
+              echo "**Infrastructure detail**"
+              echo ""
+              echo "| Field | Value |"
+              echo "|---|---|"
+              planned=$(jq -r '.planned' /tmp/status-in/infrastructure.json)
+              trans=$(jq -r '.transversal_trigger' /tmp/status-in/infrastructure.json)
+              dep=$(jq -r '.deploy' /tmp/status-in/infrastructure.json)
+              echo "| Planned            | ${planned} |"
+              echo "| Transversal-forced | ${trans} |"
+              echo "| serverless deploy  | $(ico "${dep}") ${dep} |"
+              echo ""
+            fi
+
+            blocks_found=$(ls /tmp/status-in/*.json 2>/dev/null | grep -v infrastructure || true)
+            if [ -n "${blocks_found}" ]; then
+              echo "**Per-block detail**"
+              echo ""
+              echo "| Block | Validate | Test | Deploy | Integration | URL | Stopped at |"
+              echo "|---|---|---|---|---|---|---|"
+              for f in ${blocks_found}; do
+                blk=$(jq -r '.block' "$f")
+                v=$(jq -r '.validate' "$f")
+                t=$(jq -r '.test' "$f")
+                t_specs=$(jq -r '.test_specs_present' "$f")
+                d=$(jq -r '.deploy' "$f")
+                domain=$(jq -r '.deploy_domain' "$f")
+                prefix=$(jq -r '.deploy_prefix' "$f")
+                ijob=$(jq -r '.integration_job' "$f")
+
+                test_cell="$(ico "${t}") ${t}"
+                if [ "${t}" = "success" ] && [ "${t_specs}" = "0" ]; then
+                  test_cell="⏭️ no specs"
+                fi
+
+                # Integration is dev-only, so on pro it always shows as
+                # "skipped" (block-package.yml gates it on stage).
+                int_cell="$(ico "${ijob}") ${ijob}"
+                if [ "${ijob}" = "skipped" ]; then
+                  int_cell="⏭️ dev-only"
+                fi
+
+                url_cell="—"
+                if [ "${d}" = "success" ] && [ "${domain}" != "" ] && [ "${domain}" != "null" ]; then
+                  url_cell="[${domain}/${prefix}](${domain}/${prefix})"
+                fi
+
+                stopped="—"
+                if   [ "${v}" != "success" ]; then stopped="validate"
+                elif [ "${t}" != "success" ]; then stopped="test"
+                elif [ "${d}" != "success" ]; then stopped="deploy"
+                else stopped="completed"
+                fi
+
+                echo "| \`${blk}\` | $(ico "${v}") | ${test_cell} | $(ico "${d}") | ${int_cell} | ${url_cell} | ${stopped} |"
+              done
+              echo ""
+            fi
+
+            echo "> Legend: ✅ success · ❌ failure · ⏭️ skipped · 🛑 cancelled · — not scheduled"
+            echo ">"
+            echo "> Integration is dev-only by design (\`block-package.yml\` gates it on \`stage=='dev'\`). Production runs never execute smoke tests against real infra to keep the prod environment clean."
+          } >> "$GITHUB_STEP_SUMMARY"
