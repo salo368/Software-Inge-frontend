@@ -33,7 +33,12 @@
       <p class="text-body-secondary small mb-3">
         Este es el documento que vas a firmar. El recuadro marca donde quedara tu firma.
       </p>
-      <app-pdf-preview [pdfUrl]="c.pdf_url" [page]="c.page" [x]="c.x" [y]="c.y"></app-pdf-preview>
+      <app-pdf-preview
+        [pdfUrl]="c.pdf_url"
+        [page]="c.signature_location.page"
+        [x]="c.signature_location.x_pct"
+        [y]="c.signature_location.y_pct"
+      ></app-pdf-preview>
       <button class="btn btn-primary w-100 mt-4 py-2" (click)="goToIdentity()">
         Todo en orden, continuar<i class="bi bi-arrow-right ms-2"></i>
       </button>
@@ -115,7 +120,7 @@
       <h5 class="fw-bold mb-1">Confirma con tu codigo</h5>
       <p class="text-body-secondary small mb-4">
         {{ otpSent() ? 'Enviamos' : 'Te enviaremos' }} un codigo de 6 digitos a
-        <span class="fw-semibold">{{ c.email_masked }}</span>
+        <span class="fw-semibold">{{ c.signer_email_masked }}</span>
       </p>
 
       <div *ngIf="devOtp()" class="alert alert-warning py-2 small">
@@ -183,9 +188,16 @@
         >
           <i class="bi bi-file-earmark-pdf me-1"></i>Ver documento firmado
         </a>
-        <button class="btn btn-primary px-4" (click)="backToProcess()">
-          Continuar al pago<i class="bi bi-arrow-right ms-2"></i>
+        <button
+          *ngIf="returnUrl"
+          class="btn btn-primary px-4"
+          (click)="backToProcess()"
+        >
+          {{ HOST_RETURN_LABEL }}<i class="bi bi-arrow-right ms-2"></i>
         </button>
+        <p *ngIf="!returnUrl" class="text-body-secondary small mt-3 mb-0">
+          {{ HOST_STANDALONE_DONE_LABEL }}
+        </p>
       </div>
     </div>
   </div>
