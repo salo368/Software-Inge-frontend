@@ -12,6 +12,6 @@ export const routes: Routes = [
   {
     path: '**',
     loadComponent: () =>
-      import('./pages/missing-token.component').then((m) => m.MissingTokenComponent),
+      import('./pages/missing-sign-id.component').then((m) => m.MissingSignIdComponent),
   },
 ];
