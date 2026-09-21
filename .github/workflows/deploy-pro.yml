@@ -16,6 +16,9 @@ on:
 
 permissions:
   contents: read
+  # Needed by the Plan job in deploy.yml so it can query
+  # `gh run list` for the last successful deploy SHA.
+  actions: read
 
 concurrency:
   group: deploy-pro
