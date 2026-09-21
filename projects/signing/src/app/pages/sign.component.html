@@ -1,37 +1,58 @@
+<!--
+  Signing wizard template. See sign.component.ts for the state machine
+  and the mapping from backend CeremonyStage to Screen.
+
+  Screens are gated by `screen()` (a computed signal). The stepper only
+  shows for the 5 interactive screens (review .. otp); waiting + terminal
+  screens render standalone cards.
+-->
+
+<!-- Missing / bad sign_id: rendered instead of the wizard. -->
 <div *ngIf="notFound()" class="text-center py-5">
   <div class="empty-state-icon mb-3"><i class="bi bi-link-45deg"></i></div>
   <h5 class="fw-bold mb-2">Enlace no valido</h5>
   <p class="text-body-secondary mb-0">Este enlace de firma no existe o ya expiro.</p>
 </div>
 
+<!-- Loading -->
 <div *ngIf="!notFound() && !ceremony()" class="text-center py-5">
   <div class="spinner-border text-primary" role="status"></div>
 </div>
 
 <div *ngIf="ceremony() as c" class="mx-auto" style="max-width: 720px">
-  <!-- Stepper -->
-  <div *ngIf="step() !== 'done'" class="stepper mb-4">
+  <!-- Stepper (interactive screens only) -->
+  <div *ngIf="showStepper()" class="stepper mb-4">
     <ng-container *ngFor="let s of STEPS; let i = index">
-      <div class="step" [class.done]="i < stepIndex()" [class.current]="i === stepIndex()">
+      <div class="step"
+           [class.done]="i < stepIndex()"
+           [class.current]="i === stepIndex()">
         <div class="step-dot">
           <i class="bi" [ngClass]="i < stepIndex() ? 'bi-check-lg' : s.icon"></i>
         </div>
         <div class="step-label">{{ s.label }}</div>
       </div>
-      <div *ngIf="i < STEPS.length - 1" class="step-line" [class.done]="i < stepIndex()"></div>
+      <div *ngIf="i < STEPS.length - 1"
+           class="step-line"
+           [class.done]="i < stepIndex()"></div>
     </ng-container>
   </div>
 
+  <!-- Global inline error. Terminal errors (failed/expired) get their own
+       screens; this bubble is for recoverable action errors. -->
   <div *ngIf="error()" class="alert alert-danger d-flex align-items-center gap-2">
     <i class="bi bi-exclamation-triangle-fill"></i>{{ error() }}
   </div>
 
-  <!-- review -->
-  <div *ngIf="step() === 'review'" class="card shadow-sm">
+  <!-- ==================================================================== -->
+  <!-- Screen: review                                                       -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'review'" class="card shadow-sm">
     <div class="card-body p-4">
-      <h5 class="fw-bold mb-1">Revisa tu orden de inversion</h5>
+      <h5 class="fw-bold mb-1">
+        Hola<span *ngIf="c.signer_name">, {{ c.signer_name }}</span>
+      </h5>
       <p class="text-body-secondary small mb-3">
-        Este es el documento que vas a firmar. El recuadro marca donde quedara tu firma.
+        Revisa el documento antes de continuar. El recuadro marca donde quedara tu firma.
       </p>
       <app-pdf-preview
         [pdfUrl]="c.pdf_url"
@@ -45,8 +66,10 @@
     </div>
   </div>
 
-  <!-- identity -->
-  <div *ngIf="step() === 'identity'" class="card shadow-sm">
+  <!-- ==================================================================== -->
+  <!-- Screen: identity                                                     -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'identity'" class="card shadow-sm">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-1">Valida tu identidad</h5>
       <p class="text-body-secondary small mb-3">
@@ -68,7 +91,7 @@
         </button>
       </div>
 
-      <ng-container *ngIf="activeDoc() as doc; else allDone">
+      <ng-container *ngIf="activeDoc() as doc; else identityAllDone">
         <div class="fw-semibold mb-1">{{ doc.label }}</div>
         <p class="text-body-secondary small mb-3">{{ doc.hint }}</p>
         <app-camera-capture
@@ -78,31 +101,28 @@
         ></app-camera-capture>
       </ng-container>
 
-      <ng-template #allDone>
+      <ng-template #identityAllDone>
         <div class="cam-error text-center p-4">
           <i class="bi bi-check-circle-fill fs-2 d-block mb-2" style="color: #059669"></i>
-          <p class="small mb-0">
-            Las 3 fotos quedaron listas. Toca cualquiera arriba si quieres repetirla.
+          <p class="small mb-2">Las 3 fotos quedaron listas. Toca cualquiera arriba si quieres repetirla.</p>
+          <p *ngIf="!allBiometricsDone()" class="small text-body-secondary mb-0">
+            Falta validar alguna foto -- si te da error, vuelve a tomarla.
           </p>
         </div>
       </ng-template>
-
-      <button
-        class="btn btn-primary w-100 mt-3 py-2"
-        [disabled]="!allDocsDone() || uploadBusy()"
-        (click)="step.set('drawing')"
-      >
-        Continuar a la firma<i class="bi bi-arrow-right ms-2"></i>
-      </button>
     </div>
   </div>
 
-  <!-- drawing -->
-  <div *ngIf="step() === 'drawing'" class="card shadow-sm">
+  <!-- ==================================================================== -->
+  <!-- Screen: signature                                                    -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'signature'" class="card shadow-sm">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-1">Dibuja tu firma</h5>
-      <p class="text-body-secondary small mb-3">Asi quedara estampada en el documento.</p>
-      <app-signature-pad (changed)="signatureBlob = $event"></app-signature-pad>
+      <p class="text-body-secondary small mb-3">
+        Asi quedara estampada en el documento. Puedes borrar y repetir cuantas veces necesites.
+      </p>
+      <app-signature-pad (changed)="onSignatureBlob($event)"></app-signature-pad>
       <button
         class="btn btn-primary w-100 mt-4 py-2"
         [disabled]="!signatureBlob || busy()"
@@ -114,8 +134,57 @@
     </div>
   </div>
 
-  <!-- otp -->
-  <div *ngIf="step() === 'otp'" class="card shadow-sm">
+  <!-- ==================================================================== -->
+  <!-- Screen: consent                                                      -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'consent'" class="card shadow-sm">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-1">Acepta los terminos</h5>
+      <p class="text-body-secondary small mb-3">
+        Necesitamos tu aceptacion explicita antes de sellar el documento. Lee y confirma cada punto.
+      </p>
+
+      <div
+        class="border rounded-3 p-3 mb-3"
+        style="background: #faf9fe; max-height: 320px; overflow: auto"
+      >
+        <ul class="mb-0 small">
+          <li *ngFor="let t of TERMS_BULLETS" class="mb-2">{{ t }}</li>
+        </ul>
+        <div class="mt-3 pt-2 border-top small text-body-secondary">
+          Version de terminos: <b>{{ TERMS_VERSION }}</b>
+        </div>
+      </div>
+
+      <div class="form-check mb-3">
+        <input
+          class="form-check-input"
+          type="checkbox"
+          id="consentCheck"
+          [checked]="consentChecked()"
+          (change)="consentChecked.set($any($event.target).checked)"
+          [disabled]="busy()"
+        />
+        <label class="form-check-label small" for="consentCheck">
+          He leido y acepto los terminos anteriores.
+        </label>
+      </div>
+
+      <button
+        class="btn btn-primary w-100 py-2"
+        [disabled]="!consentChecked() || busy()"
+        (click)="acceptConsent()"
+      >
+        <span *ngIf="busy()" class="spinner-border spinner-border-sm me-2"></span>
+        Acepto y quiero recibir el codigo<i class="bi bi-arrow-right ms-2"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- Screen: otp                                                          -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'otp'" class="card shadow-sm">
     <div class="card-body p-4 text-center">
       <h5 class="fw-bold mb-1">Confirma con tu codigo</h5>
       <p class="text-body-secondary small mb-4">
@@ -124,7 +193,7 @@
       </p>
 
       <div *ngIf="devOtp()" class="alert alert-warning py-2 small">
-        No pudimos entregar el correo. Codigo de prueba: <b>{{ devOtp() }}</b>
+        Codigo de prueba (solo dev): <b>{{ devOtp() }}</b>
       </div>
 
       <ng-container *ngIf="otpSent(); else askOtp">
@@ -135,26 +204,31 @@
           inputmode="numeric"
           autocomplete="one-time-code"
           placeholder="······"
+          [disabled]="busy()"
         />
         <button
           class="btn btn-primary w-100 py-2"
           [disabled]="otp.length !== 6 || busy()"
-          (click)="confirm()"
+          (click)="confirmOtp()"
         >
           <span *ngIf="busy()" class="spinner-border spinner-border-sm me-2"></span>
           Firmar documento
         </button>
-        <button
-          class="btn btn-link btn-sm mt-2 text-decoration-none"
-          [disabled]="busy()"
-          (click)="sendOtp()"
-        >
-          Reenviar codigo
-        </button>
+        <div class="mt-2 small">
+          <span class="text-body-secondary">Intentos restantes: {{ c.otp.attempts_left }}</span>
+          <span class="mx-2 text-body-secondary">·</span>
+          <button
+            class="btn btn-link btn-sm p-0 text-decoration-none"
+            [disabled]="busy()"
+            (click)="resendOtp()"
+          >
+            Reenviar codigo
+          </button>
+        </div>
       </ng-container>
 
       <ng-template #askOtp>
-        <button class="btn btn-primary w-100 py-2" [disabled]="busy()" (click)="sendOtp()">
+        <button class="btn btn-primary w-100 py-2" [disabled]="busy()" (click)="ensureOtpRequested()">
           <span *ngIf="busy()" class="spinner-border spinner-border-sm me-2"></span>
           Enviar codigo a mi correo
         </button>
@@ -162,8 +236,47 @@
     </div>
   </div>
 
-  <!-- done -->
-  <div *ngIf="step() === 'done'" class="card shadow-sm">
+  <!-- ==================================================================== -->
+  <!-- Screen: signing (async worker running)                               -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'signing'" class="card shadow-sm">
+    <div class="card-body p-5 text-center">
+      <div
+        class="empty-state-icon mb-3"
+        style="background: linear-gradient(135deg, #ede9fe, #ddd6fe); color: var(--brand)"
+      >
+        <div class="spinner-border" role="status" style="width: 2rem; height: 2rem"></div>
+      </div>
+      <h4 class="fw-bolder mb-2">Firmando el documento...</h4>
+      <p class="text-body-secondary mb-4">
+        Estamos generando tu firma digital y sellando el PDF. Esto puede tardar hasta un minuto.
+      </p>
+
+      <div class="text-start mx-auto" style="max-width: 380px">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-check-circle-fill text-success"></i>
+          <span class="small">Codigo verificado</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <div class="spinner-border spinner-border-sm text-primary" role="status" style="width: 1rem; height: 1rem"></div>
+          <span class="small">Generando firma digital y sellando el PDF</span>
+        </div>
+        <div class="d-flex align-items-center gap-2 text-body-secondary">
+          <i class="bi bi-circle" style="font-size: 0.9rem"></i>
+          <span class="small">Emitir certificado de autenticidad</span>
+        </div>
+      </div>
+
+      <div class="small text-body-secondary mt-4">
+        Tiempo transcurrido: {{ waitingSeconds() }}s
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- Screen: done (signed)                                                -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'done'" class="card shadow-sm">
     <div class="card-body p-5 text-center">
       <div
         class="empty-state-icon mb-3"
@@ -173,16 +286,18 @@
       </div>
       <h4 class="fw-bolder mb-2">Documento firmado</h4>
       <p class="text-body-secondary mb-4">
-        Tu firma quedo estampada en la orden de inversion junto con el certificado de autenticidad.
+        Tu firma quedo estampada en el documento junto con el certificado de autenticidad.
       </p>
-      <div *ngIf="docHash()" class="border rounded-3 p-3 mb-4 text-start" style="background: #faf9fe">
+
+      <div *ngIf="c.hash_signed" class="border rounded-3 p-3 mb-4 text-start" style="background: #faf9fe">
         <div class="small text-body-secondary mb-1">Hash de autenticidad (SHA-256)</div>
-        <code class="small text-break">{{ docHash() }}</code>
+        <code class="small text-break">{{ c.hash_signed }}</code>
       </div>
+
       <div class="d-flex justify-content-center gap-2 flex-wrap">
         <a
-          *ngIf="signedPdfUrl()"
-          [href]="signedPdfUrl()"
+          *ngIf="c.signed_pdf_url"
+          [href]="c.signed_pdf_url"
           target="_blank"
           class="btn btn-outline-primary"
         >
@@ -195,10 +310,72 @@
         >
           {{ HOST_RETURN_LABEL }}<i class="bi bi-arrow-right ms-2"></i>
         </button>
-        <p *ngIf="!returnUrl" class="text-body-secondary small mt-3 mb-0">
-          {{ HOST_STANDALONE_DONE_LABEL }}
-        </p>
       </div>
+      <p *ngIf="!returnUrl" class="text-body-secondary small mt-3 mb-0">
+        {{ HOST_STANDALONE_DONE_LABEL }}
+      </p>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- Screen: failed                                                       -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'failed'" class="card shadow-sm">
+    <div class="card-body p-5 text-center">
+      <div
+        class="empty-state-icon mb-3"
+        style="background: linear-gradient(135deg, #fee2e2, #fecaca); color: #dc2626"
+      >
+        <i class="bi bi-exclamation-octagon-fill"></i>
+      </div>
+      <h4 class="fw-bolder mb-2">No pudimos firmar el documento</h4>
+      <p class="text-body-secondary mb-4">
+        Ocurrio un error al sellar el PDF. La ceremonia no se puede reintentar
+        desde aca; solicita un enlace nuevo desde el portal.
+      </p>
+      <div class="d-flex justify-content-center gap-2 flex-wrap">
+        <button
+          *ngIf="returnUrl"
+          class="btn btn-primary px-4"
+          (click)="backToProcess()"
+        >
+          Volver al portal<i class="bi bi-arrow-right ms-2"></i>
+        </button>
+      </div>
+      <p *ngIf="!returnUrl" class="text-body-secondary small mt-3 mb-0">
+        Cierra esta pestana y vuelve a iniciar el proceso desde el portal.
+      </p>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- Screen: expired                                                      -->
+  <!-- ==================================================================== -->
+  <div *ngIf="screen() === 'expired'" class="card shadow-sm">
+    <div class="card-body p-5 text-center">
+      <div
+        class="empty-state-icon mb-3"
+        style="background: linear-gradient(135deg, #fef3c7, #fde68a); color: #b45309"
+      >
+        <i class="bi bi-hourglass-bottom"></i>
+      </div>
+      <h4 class="fw-bolder mb-2">Este enlace expiro</h4>
+      <p class="text-body-secondary mb-4">
+        Los enlaces de firma tienen tiempo limitado por seguridad. Solicita uno
+        nuevo desde el portal y vuelve a intentarlo.
+      </p>
+      <div class="d-flex justify-content-center gap-2 flex-wrap">
+        <button
+          *ngIf="returnUrl"
+          class="btn btn-primary px-4"
+          (click)="backToProcess()"
+        >
+          Volver al portal<i class="bi bi-arrow-right ms-2"></i>
+        </button>
+      </div>
+      <p *ngIf="!returnUrl" class="text-body-secondary small mt-3 mb-0">
+        Cierra esta pestana y vuelve a iniciar el proceso desde el portal.
+      </p>
     </div>
   </div>
 </div>
