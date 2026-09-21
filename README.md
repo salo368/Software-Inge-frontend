@@ -152,27 +152,53 @@ Los artefactos quedan en `dist/<bloque>/browser/`.
 
 Va por GitHub Actions: push a `develop` despliega `dev`, push a `main` despliega
 `pro`. Ambos workflows delegan en
-[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml), que hace
-`plan → validate → infra → deploy`:
+[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml), que copia la
+forma del pipeline del backend: `plan → validate → infrastructure → blocks →
+summary`.
 
 1. **Plan** — [`scripts/ci/plan-deploy.sh`](./scripts/ci/plan-deploy.sh) mira el
-   diff y decide que bloques tocar. Cambios en `projects/shared/`, `angular.json`
-   o `package.json` disparan los tres; cambios en un solo bloque, solo ese;
-   cambios en docs o workflows, ninguno.
-2. **Validate** — corre los tests del router del edge y compila los tres bloques.
-   Si falla, no se despliega nada.
-3. **Infra** — `sls deploy`, pero **solo si hace falta**: si cambio
-   `serverless.yml` o `infra/`. Es el paso lento (CloudFront puede tardar varios
-   minutos en converger), asi que los cambios de codigo se lo saltan.
-4. **Deploy** — un job por bloque, en paralelo.
-   [`scripts/ci/deploy.sh`](./scripts/ci/deploy.sh) sube a S3 con `Content-Type`
-   explicito por extension (el `aws s3 sync` a secas adivina mal y sirve los
-   `.js` como `text/plain`, lo que rompe la SPA), aplica `Cache-Control:
-   immutable` a los assets hasheados y `no-cache` a `index.html`, borra
-   huerfanos e invalida **solo las rutas de ese bloque**.
+   diff (anclado al **ultimo deploy exitoso** de este workflow en la rama, no al
+   parent del push — asi un pipeline previo que fallo en Validate no pierde su
+   cambio de infra) y decide que bloques tocar y si hace falta infra. Cambios
+   en `projects/shared/`, `angular.json`, `package.json`, `tsconfig*.json`,
+   `.nvmrc`, `scripts/ci/deploy.sh` o `.github/workflows/**` son
+   **transversales**: disparan los tres bloques. Cambios en un solo bloque,
+   solo ese; cambios en docs, ninguno.
+2. **Validate** — corre los tests del router del edge y compila los tres bloques
+   como sanity workspace-wide. Si falla, no se despliega nada.
+3. **Infrastructure** — `sls deploy` del stack compartido (CloudFront + S3 por
+   bloque + edge function). Solo si el plan asi lo pidio (`serverless.yml` o
+   `infra/**` cambiaron, o `force_infra: true`). Es el paso lento (CloudFront
+   puede tardar varios minutos en converger), asi que los cambios de codigo se
+   lo saltan.
+4. **Blocks** — matrix, un call a
+   [`.github/workflows/block-package.yml`](./.github/workflows/block-package.yml)
+   por bloque. Cada bloque corre en paralelo con su propia cadena
+   **validate → test → deploy → integration**, igual que un servicio del
+   backend:
+   - **validate**: `ng build <block>` de sanity.
+   - **test**: detecta `*.spec.ts` bajo `projects/<block>/src/`. Sin specs,
+     skip con `::notice::` (verde). Con specs, corre Karma headless.
+   - **deploy**: [`scripts/ci/deploy.sh`](./scripts/ci/deploy.sh) sube a S3 con
+     `Content-Type` explicito por extension (el `aws s3 sync` a secas adivina
+     mal y sirve los `.js` como `text/plain`, lo que rompe la SPA), aplica
+     `Cache-Control: immutable` a los assets hasheados y `no-cache` a
+     `index.html`, borra huerfanos e invalida **solo las rutas de ese bloque**.
+   - **integration**: dev-only y **non-blocking**. Detecta `projects/<block>/e2e/`
+     (Playwright) o `projects/<block>/cypress/` (Cypress). Sin suite, skip con
+     `::notice::` (verde). Con suite, corre contra la URL recien desplegada.
+5. **Summary** — descarga los artifacts `block-status-*` +
+   `infrastructure-status` y renderiza una tabla por bloque/stage con donde
+   paro cada uno, la URL desplegada y el estado de tests/integration.
 
 Para desplegar un bloque a mano, correr el workflow con `block: portal`. Para
 forzar el paso de infra sin tocar `serverless.yml`, con `force_infra: true`.
+Para redeploy completo, `block: __all__`.
+
+> Todavia no hay `*.spec.ts` ni `e2e/` en ningun bloque — el pipeline los
+> **skippea limpiamente**, marcando la celda como `no specs` / `no e2e` en el
+> summary. Cuando se agreguen (por ejemplo la E2E Playwright de la ceremonia
+> de firma), el pipeline los recoge sin cambios en workflow.
 
 ## Agregar un bloque nuevo
 

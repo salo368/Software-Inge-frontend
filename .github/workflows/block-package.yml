@@ -1,0 +1,343 @@
+name: Block Package
+
+# Reusable per-block pipeline: validate -> test -> deploy -> integration.
+#
+# Called ONCE PER BLOCK from deploy.yml. Each caller matrix cell resolves
+# to one invocation of this workflow; GitHub UI renders each invocation
+# as an expandable group in the run visualization, so each micro-front
+# (simulator, portal, signing) shows up as its own chain of four
+# clearly-named boxes instead of scattered matrix rows.
+#
+# Contract with the caller:
+#   * `block` is the folder name under projects/<block>/.
+#   * `stage` is 'dev' or 'pro'. The `integration` job only runs when
+#     stage == 'dev' -- production must not have throwaway browser
+#     sessions polluting the environment.
+#   * AWS credentials come from `secrets: inherit` on the caller. Each
+#     job that needs them declares `environment: ${{ inputs.stage }}` so
+#     the env-scoped secrets resolve at that point.
+#
+# Every job emits its result into `outputs`; a final `record_status` job
+# collects them into a single JSON artifact (`block-status-<block>`)
+# that the caller's `summary` job downloads and renders into a table.
+#
+# Tests and integration are OPTIONAL: a block with no *.spec.ts or no
+# e2e/ folder skips the corresponding job with a `::notice::`, so the
+# pipeline structure is ready for Karma / Playwright to slot in later
+# without any workflow change. See `Detect` steps for the exact rules.
+
+on:
+  workflow_call:
+    inputs:
+      block:
+        description: "Block folder name under projects/."
+        type: string
+        required: true
+      stage:
+        description: "'dev' or 'pro'. Integration is skipped when 'pro'."
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1) validate: cheap dry-run of the block's ng build. Catches
+  #    TypeScript errors, template errors, missing imports, angular.json
+  #    misconfiguration, etc. Fast (~10-15s per block on a warm cache) so
+  #    unit tests don't waste time when the build is broken.
+  #
+  #    NOTE: the caller's `Validate` job ALREADY runs `ng build` for every
+  #    block as a cross-cutting sanity check. This step is redundant with
+  #    that, but we keep it so the per-block box on the run visualization
+  #    truthfully shows a 'validate' outcome (matches the backend shape
+  #    exactly, and future differentiation like per-block lint would land
+  #    here).
+  # --------------------------------------------------------------------------
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        # npm install (not ci): Angular's lock file has multiple versions
+        # of chokidar/readdirp in the tree; npm ci rejects it as
+        # inconsistent.
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: "Build (dry-run: verify block compiles for ${{ inputs.stage }})"
+        run: |
+          if ! node -e "const p = require('./angular.json').projects['${{ inputs.block }}']; if (!p) process.exit(1);"; then
+            echo "::error::Block '${{ inputs.block }}' is not registered in angular.json"
+            exit 1
+          fi
+          npx ng build "${{ inputs.block }}" --configuration ${{ inputs.stage }}
+
+  # --------------------------------------------------------------------------
+  # 2) test: colocated *.spec.ts files for every component/service in the
+  #    block. Blocks the rest of the package on failure. Optional today
+  #    (no spec files exist yet); the detect step skips cleanly with a
+  #    ::notice:: so the box on the run visualization still turns green.
+  # --------------------------------------------------------------------------
+  test:
+    name: Test
+    needs: validate
+    if: needs.validate.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      specs_present: ${{ steps.detect.outputs.count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      # Detect *.spec.ts inside the block. Absence is fine -- see the
+      # comment on the job. When files exist, we honor them.
+      - name: Detect spec files
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          hits=(projects/${{ inputs.block }}/src/**/*.spec.ts)
+          echo "count=${#hits[@]}" >> "$GITHUB_OUTPUT"
+          if [ ${#hits[@]} -eq 0 ]; then
+            echo "::notice::No *.spec.ts under projects/${{ inputs.block }}/src/. Skipping (Karma tests are optional; add spec files to activate)."
+          else
+            echo "== ${#hits[@]} spec file(s) discovered:"
+            printf '   %s\n' "${hits[@]}"
+          fi
+
+      - name: Run Karma tests (headless Chrome)
+        if: steps.detect.outputs.count != '0'
+        # `ChromeHeadless` is Angular's built-in launcher and works out
+        # of the box on GH-hosted runners. If sandbox issues surface
+        # once specs are being added, drop a workspace-level
+        # karma.conf.js that defines a `ChromeHeadlessCI` custom
+        # launcher with `--no-sandbox` and switch the flag here.
+        run: |
+          npx ng test "${{ inputs.block }}" \
+            --watch=false \
+            --browsers=ChromeHeadless \
+            --code-coverage=false
+
+  # --------------------------------------------------------------------------
+  # 3) deploy: builds the block for the target stage, uploads to its S3
+  #    bucket, and invalidates its CloudFront paths. Requires validate +
+  #    test (both must be `success` or the whole package aborts here).
+  # --------------------------------------------------------------------------
+  deploy:
+    name: Deploy
+    needs: [validate, test]
+    if: needs.validate.result == 'success' && needs.test.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.stage }}
+      url: ${{ steps.urls.outputs.domain }}
+    outputs:
+      domain: ${{ steps.urls.outputs.domain }}
+      prefix: ${{ steps.block.outputs.PREFIX }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Resolve block coordinates
+        id: block
+        run: bash scripts/ci/block-info.sh "${{ inputs.block }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: npx ng build "${{ inputs.block }}" --configuration ${{ inputs.stage }}
+
+      - name: Read stack outputs
+        id: urls
+        run: |
+          get() {
+            aws cloudformation describe-stacks \
+              --stack-name "cdts-${{ inputs.stage }}-frontend" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
+              --output text
+          }
+          {
+            echo "bucket=$(get '${{ steps.block.outputs.BUCKET_OUTPUT }}')"
+            echo "dist_id=$(get CloudFrontDistributionId)"
+            echo "domain=https://$(get CloudFrontDomainName)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to S3 and invalidate CloudFront
+        env:
+          BUCKET: ${{ steps.urls.outputs.bucket }}
+          DIST_ID: ${{ steps.urls.outputs.dist_id }}
+          DIST_DIR: ${{ steps.block.outputs.DIST_DIR }}
+          PREFIX: ${{ steps.block.outputs.PREFIX }}
+        run: bash scripts/ci/deploy.sh
+
+  # --------------------------------------------------------------------------
+  # 4) integration: colocated end-to-end tests against the just-deployed
+  #    CloudFront distribution. Dev only. Non-blocking (continue-on-error)
+  #    so a failure never rolls back the deploy that already succeeded.
+  #
+  #    Optional today: the detect step looks for `projects/<block>/e2e/`
+  #    (Playwright convention) OR `projects/<block>/cypress/`. If neither
+  #    exists we skip cleanly with a ::notice::.
+  # --------------------------------------------------------------------------
+  integration:
+    name: Integration
+    needs: [validate, test, deploy]
+    if: inputs.stage == 'dev' && needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    environment:
+      name: dev
+    outputs:
+      pytest_outcome: ${{ steps.run.outcome }}
+      files_present: ${{ steps.detect.outputs.count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Detect e2e suite
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Playwright and Cypress both put their specs under a
+          # dedicated folder next to the block. We treat either as a
+          # signal that the block has E2E coverage.
+          count=0
+          if [ -d "projects/${{ inputs.block }}/e2e" ] || \
+             [ -d "projects/${{ inputs.block }}/cypress" ]; then
+            count=1
+          fi
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+          if [ "${count}" = "0" ]; then
+            echo "::notice::No e2e/ or cypress/ folder under projects/${{ inputs.block }}/. Skipping (optional; wire Playwright or Cypress to activate)."
+          fi
+
+      - name: Install dependencies
+        if: steps.detect.outputs.count != '0'
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Resolve target URL from CloudFront
+        if: steps.detect.outputs.count != '0'
+        id: url
+        run: |
+          domain="https://$(aws cloudformation describe-stacks \
+            --stack-name "cdts-${{ inputs.stage }}-frontend" \
+            --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDomainName'].OutputValue" \
+            --output text)"
+          prefix="$(bash scripts/ci/block-info.sh "${{ inputs.block }}" | grep '^PREFIX=' | cut -d= -f2)"
+          echo "target=${domain}/${prefix}" >> "$GITHUB_OUTPUT"
+
+      - name: Run e2e tests
+        id: run
+        if: steps.detect.outputs.count != '0'
+        env:
+          BLOCK: ${{ inputs.block }}
+          STAGE: ${{ inputs.stage }}
+          TARGET_URL: ${{ steps.url.outputs.target }}
+        run: |
+          # Convention: each block that opts in provides its own runner
+          # entry. Playwright: `npx playwright test projects/<block>/e2e/`.
+          # Cypress:    `npx cypress run --project projects/<block>`.
+          # We try Playwright first, fall back to Cypress. Both accept
+          # BASE_URL / CYPRESS_BASE_URL via env.
+          if [ -d "projects/${BLOCK}/e2e" ]; then
+            npx playwright install --with-deps chromium
+            PLAYWRIGHT_BASE_URL="${TARGET_URL}" \
+              npx playwright test "projects/${BLOCK}/e2e"
+          else
+            CYPRESS_BASE_URL="${TARGET_URL}" \
+              npx cypress run --project "projects/${BLOCK}"
+          fi
+
+  # --------------------------------------------------------------------------
+  # 5) record_status: single-artifact aggregator. Always runs, no matter
+  #    which stage stopped the chain. Writes a JSON blob that the caller's
+  #    summary job downloads to render a per-block, per-stage table.
+  # --------------------------------------------------------------------------
+  record_status:
+    name: Status
+    needs: [validate, test, deploy, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose status JSON
+        run: |
+          mkdir -p /tmp/status
+          cat > "/tmp/status/${{ inputs.block }}.json" <<EOF
+          {
+            "block": "${{ inputs.block }}",
+            "stage": "${{ inputs.stage }}",
+            "validate": "${{ needs.validate.result }}",
+            "test": "${{ needs.test.result }}",
+            "test_specs_present": "${{ needs.test.outputs.specs_present }}",
+            "deploy": "${{ needs.deploy.result }}",
+            "deploy_domain": "${{ needs.deploy.outputs.domain }}",
+            "deploy_prefix": "${{ needs.deploy.outputs.prefix }}",
+            "integration_job": "${{ needs.integration.result }}",
+            "integration_outcome": "${{ needs.integration.outputs.pytest_outcome }}",
+            "integration_files_present": "${{ needs.integration.outputs.files_present }}"
+          }
+          EOF
+          echo "----- /tmp/status/${{ inputs.block }}.json -----"
+          cat "/tmp/status/${{ inputs.block }}.json"
+
+      - name: Upload block status
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-status-${{ inputs.block }}
+          path: /tmp/status/${{ inputs.block }}.json
+          retention-days: 7
