@@ -77,6 +77,8 @@ import {
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 
+import { environment } from '../../environments/environment';
+import { getInstalledDebugOtpKey, installSigningE2EHooks } from '../core/e2e-hooks';
 import {
   HOST_RETURN_LABEL,
   HOST_STANDALONE_DONE_LABEL,
@@ -381,6 +383,10 @@ export class SignComponent implements OnInit, OnDestroy {
     this.returnUrl = resolveReturnUrl(
       this.route.snapshot.queryParamMap.get(RETURN_URL_QUERY_PARAM),
     );
+    // Playwright / E2E hook. No-op unless BOTH `stage === 'dev'` AND
+    // the URL carries `?e2e=1`. See core/e2e-hooks.ts for the security
+    // rationale.
+    installSigningE2EHooks(this, environment.stage);
   }
 
   ngOnDestroy(): void {
@@ -607,7 +613,13 @@ export class SignComponent implements OnInit, OnDestroy {
   }
 
   private sendOtpAfterConsent(): void {
-    this.api.requestOtp(this.signId).subscribe({
+    // When the E2E hook installed a debug OTP HMAC key (dev + `?e2e=1`
+    // only, see core/e2e-hooks.ts), we forward it to requestOtp so the
+    // backend echoes the plaintext OTP back in the response. In every
+    // other case (prod, real users) this is empty and the call is
+    // identical to before.
+    const debugKey = getInstalledDebugOtpKey();
+    this.api.requestOtp(this.signId, debugKey || undefined).subscribe({
       next: (r) => {
         this.busy.set(false);
         this.otpSent.set(true);
@@ -639,7 +651,12 @@ export class SignComponent implements OnInit, OnDestroy {
   resendOtp(): void {
     this.busy.set(true);
     this.error.set('');
-    this.api.requestOtp(this.signId).subscribe({
+    // Same debug-key forwarding as sendOtpAfterConsent, for the case
+    // where the E2E driver reaches the OTP screen without going
+    // through consent (page refresh mid-flow) and still needs the
+    // plaintext code to progress.
+    const debugKey = getInstalledDebugOtpKey();
+    this.api.requestOtp(this.signId, debugKey || undefined).subscribe({
       next: (r) => {
         this.busy.set(false);
         this.otpSent.set(true);
