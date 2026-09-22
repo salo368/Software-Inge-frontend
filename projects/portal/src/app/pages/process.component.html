@@ -64,8 +64,9 @@
       <ng-container *ngIf="stage() === 'signature'">
         <h5 class="fw-bold mb-1">Firma tu orden de inversion</h5>
         <p class="text-body-secondary small mb-4">
-          Te enviaremos un enlace seguro a tu correo. Revisas el documento, validas tu identidad
-          con la camara y confirmas con un codigo de un solo uso.
+          Te enviaremos un enlace seguro a tu correo (y podes abrirlo aca mismo). Revisas el
+          documento, validas tu identidad con la camara y confirmas con un codigo de un solo uso.
+          Cuando termines te traemos de vuelta a este proceso.
         </p>
         <div class="border rounded-3 p-3 mb-3 d-flex align-items-center gap-3" style="background: #faf9fe">
           <i class="bi bi-file-earmark-text fs-3" style="color: var(--brand)"></i>
@@ -86,14 +87,46 @@
           <span><i class="bi bi-shield-lock me-1"></i>Codigo por correo</span>
         </div>
 
+        <!-- Info banner when the previous ceremony aborted. The button
+             below reopens a fresh one via advance(). -->
+        <div
+          *ngIf="signatureCta() === 'retry'"
+          class="alert alert-warning py-2 small mb-3"
+        >
+          <i class="bi bi-exclamation-triangle me-1"></i>
+          <ng-container *ngIf="d.signature?.stage === 'expired'">
+            La ceremonia anterior expiro. Comenzamos una nueva.
+          </ng-container>
+          <ng-container *ngIf="d.signature?.stage === 'failed'">
+            La ceremonia anterior fallo. Podes intentarlo de nuevo.
+          </ng-container>
+        </div>
+
+        <!-- Info banner while the worker is still crunching. The user
+             usually shouldn't land here because they were auto-redirected
+             to the signing SPA, but this covers the edge case of coming
+             back too early (before the callback fires). -->
+        <div
+          *ngIf="signatureCta() === 'processing'"
+          class="alert alert-info py-2 small mb-3"
+        >
+          <span class="spinner-border spinner-border-sm me-2"></span>
+          Estamos firmando tu documento. Espera unos segundos y refresca.
+        </div>
+
         <button
           class="btn btn-primary w-100 py-2"
-          [disabled]="signing()"
+          [disabled]="signing() || signatureCta() === 'processing'"
           (click)="startSignature()"
         >
           <span *ngIf="signing()" class="spinner-border spinner-border-sm me-2"></span>
-          {{ d.signature && d.signature.stage !== 'signed' ? 'Continuar mi firma' : 'Firmar ahora' }}
-          <i class="bi bi-arrow-right ms-2"></i>
+          <ng-container [ngSwitch]="signatureCta()">
+            <span *ngSwitchCase="'resume'">Continuar mi firma</span>
+            <span *ngSwitchCase="'retry'">Reabrir ceremonia</span>
+            <span *ngSwitchCase="'processing'">Firmando...</span>
+            <span *ngSwitchDefault>Firmar ahora</span>
+          </ng-container>
+          <i *ngIf="signatureCta() !== 'processing'" class="bi bi-arrow-right ms-2"></i>
         </button>
       </ng-container>
 

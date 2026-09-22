@@ -7,5 +7,6 @@ export const environment = {
   filesApiUrl: 'https://REPLACE-AT-FIRST-PRO-DEPLOY.execute-api.us-east-1.amazonaws.com',
   formsApiUrl: 'https://REPLACE-AT-FIRST-PRO-DEPLOY.execute-api.us-east-1.amazonaws.com',
   processesApiUrl: 'https://REPLACE-AT-FIRST-PRO-DEPLOY.execute-api.us-east-1.amazonaws.com',
-  signaturesApiUrl: 'https://REPLACE-AT-FIRST-PRO-DEPLOY.execute-api.us-east-1.amazonaws.com',
+  // signaturesApiUrl intentionally omitted from shared. See the dev env
+  // for the rationale (browser must not talk to the signatures API).
 };

@@ -8,5 +8,8 @@ export const environment = {
   filesApiUrl: 'https://vscpzi63i5.execute-api.us-east-1.amazonaws.com',
   formsApiUrl: 'https://aq75mimnb5.execute-api.us-east-1.amazonaws.com',
   processesApiUrl: 'https://qtpm8tknoi.execute-api.us-east-1.amazonaws.com',
-  signaturesApiUrl: 'https://6yif8zgrr4.execute-api.us-east-1.amazonaws.com',
+  // signaturesApiUrl intentionally omitted from shared: the browser
+  // must not call the signatures API directly. The signing SPA has its
+  // own env with that URL; other blocks always go through
+  // /processes/advance which internally opens the ceremony.
 };
