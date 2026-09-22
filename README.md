@@ -21,7 +21,7 @@ propio bucket.
 |---|---|---|---|
 | `simulator` | `/` y `/docs` | no | Landing, simulador de tasas y documentacion |
 | `portal` | `/portal/*` | si | Login, registro, cuenta y wizard del proceso |
-| `signing` | `/sign/*` | no, el token es la credencial | Ceremonia de firma electronica |
+| `signing` | `/sign/*` | no, el token es la credencial | Ceremonia de firma electronica ([README](./projects/signing/README.md)) |
 
 El codigo vive en `projects/<bloque>/`, y lo comun en `projects/shared/`,
 importable como `@shared/*`.
@@ -217,10 +217,15 @@ Para desplegar un bloque a mano, correr el workflow con `block: portal`. Para
 forzar el paso de infra sin tocar `serverless.yml`, con `force_infra: true`.
 Para redeploy completo, `block: __all__`.
 
-> Todavia no hay `*.spec.ts` ni `e2e/` en ningun bloque — el pipeline los
+> Todavia no hay `*.spec.ts` ni `projects/<block>/e2e/` — el pipeline los
 > **skippea limpiamente**, marcando la celda como `no specs` / `no e2e` en el
-> summary. Cuando se agreguen (por ejemplo la E2E Playwright de la ceremonia
-> de firma), el pipeline los recoge sin cambios en workflow.
+> summary. Cuando se agreguen, el pipeline los recoge sin cambios en workflow.
+>
+> Para la ceremonia de firma **ya existe** una suite Playwright, pero vive a
+> nivel de repo (`e2e/`, no `projects/signing/e2e/`) porque cruza dos bloques
+> (portal → signing → portal). Corre en dispatch manual via
+> [`.github/workflows/e2e.yml`](./.github/workflows/e2e.yml), no en el critical
+> path del deploy. Ver [`e2e/README.md`](./e2e/README.md).
 
 ## Agregar un bloque nuevo
 
