@@ -43,3 +43,11 @@ Thumbs.db
 
 # Serverless Framework
 .serverless/
+
+# Playwright / E2E
+/e2e/.env
+/e2e/report/
+/e2e/test-results/
+/playwright-report/
+/playwright/.cache/
+

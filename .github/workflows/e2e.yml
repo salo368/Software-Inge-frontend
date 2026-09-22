@@ -1,0 +1,86 @@
+name: E2E (Playwright)
+
+# Manual smoke test suite for the signing feature. Runs against dev.
+# Not on the deploy critical path because the async sign worker takes
+# 30-90s per test and we don't want every push to pay that cost. Fire
+# it manually before promoting a signing-related change to pro.
+#
+# See e2e/README.md for the rationale and env var reference.
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Spec filter (empty = all). Example: 'signing-standalone' or 'portal-to-payment'."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # The `dev` environment holds all the secrets/vars this suite
+    # needs. Reusing it keeps rotation in one place.
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      # The face fixture is optional and never committed. If the env
+      # provides a base64 blob we materialize it here so the specs can
+      # `test.skip(!face)` gracefully when the secret is missing.
+      - name: Materialize face fixture (optional)
+        if: ${{ env.SIGNATURES_TEST_FACE_B64 != '' }}
+        env:
+          SIGNATURES_TEST_FACE_B64: ${{ secrets.SIGNATURES_TEST_FACE_B64 }}
+        run: |
+          echo "$SIGNATURES_TEST_FACE_B64" | base64 -d > /tmp/e2e-face.jpg
+          echo "SIGNATURES_TEST_FACE_PATH=/tmp/e2e-face.jpg" >> "$GITHUB_ENV"
+
+      - name: Run Playwright
+        env:
+          CI: "true"
+          FRONTEND_BASE_URL: ${{ vars.FRONTEND_BASE_URL }}
+          AUTH_API_URL: ${{ vars.AUTH_API_URL }}
+          BANKS_API_URL: ${{ vars.BANKS_API_URL }}
+          FILES_API_URL: ${{ vars.FILES_API_URL }}
+          PROCESSES_API_URL: ${{ vars.PROCESSES_API_URL }}
+          SIGNATURES_API_URL: ${{ vars.SIGNATURES_API_URL }}
+          SIGNATURES_SERVICE_KEY: ${{ secrets.SIGNATURES_SERVICE_KEY }}
+          DEBUG_OTP_KEY_HEX: ${{ secrets.DEBUG_OTP_KEY_HEX }}
+        run: |
+          if [ -n "${{ inputs.spec }}" ]; then
+            npx playwright test --grep "${{ inputs.spec }}"
+          else
+            npx playwright test
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/report/
+          retention-days: 14
