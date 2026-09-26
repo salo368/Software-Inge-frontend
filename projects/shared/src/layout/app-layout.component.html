@@ -1,4 +1,4 @@
-<nav class="app-navbar sticky-top">
+<nav id="global-navbar" class="app-navbar sticky-top">
   <div class="container-xxl px-3 px-lg-4 d-flex align-items-center py-2">
     <a [href]="urls.simulator" class="navbar-brand mb-0 me-4 fs-4 text-decoration-none">
       <span class="brand-gradient">CDT</span>s
@@ -6,6 +6,7 @@
 
     <div class="d-none d-md-flex align-items-center gap-1 me-auto">
       <a
+        id="global-nav-simulator"
         [href]="urls.simulator"
         [class.active]="active === 'simulator'"
         class="nav-link text-decoration-none"
@@ -13,6 +14,7 @@
         <i class="bi bi-graph-up-arrow me-1"></i>Simulador
       </a>
       <a
+        id="global-nav-account"
         *ngIf="isAuthenticated()"
         [href]="urls.account"
         [class.active]="active === 'account'"
@@ -25,16 +27,16 @@
     <div class="d-flex align-items-center gap-2 ms-auto">
       <ng-container *ngIf="user() as u; else guestNav">
         <span class="avatar me-1">{{ initial() }}</span>
-        <span class="d-none d-sm-inline text-body-secondary me-2 fw-semibold small">
+        <span id="global-user-name" class="d-none d-sm-inline text-body-secondary me-2 fw-semibold small">
           {{ u.full_name || u.email }}
         </span>
-        <button class="btn btn-outline-secondary btn-sm" (click)="logout()">
+        <button id="global-nav-logout" class="btn btn-outline-secondary btn-sm" (click)="logout()">
           <i class="bi bi-box-arrow-right me-1"></i>Salir
         </button>
       </ng-container>
       <ng-template #guestNav>
-        <a [href]="urls.login" class="btn btn-outline-primary btn-sm"> Iniciar sesion </a>
-        <a [href]="urls.register" class="btn btn-primary btn-sm"> Crear cuenta </a>
+        <a id="global-nav-login" [href]="urls.login" class="btn btn-outline-primary btn-sm"> Iniciar sesion </a>
+        <a id="global-nav-register" [href]="urls.register" class="btn btn-primary btn-sm"> Crear cuenta </a>
       </ng-template>
     </div>
   </div>
