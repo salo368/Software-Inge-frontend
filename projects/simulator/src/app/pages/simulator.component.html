@@ -52,12 +52,13 @@
   <div class="card-body p-4">
     <div class="row g-3 justify-content-center align-items-end controls-row">
       <div class="col-12 col-lg-auto">
-        <label class="form-label small text-uppercase text-body-secondary fw-bold d-block mb-2">
+        <label for="simulator-investment-amount" class="form-label small text-uppercase text-body-secondary fw-bold d-block mb-2">
           <i class="bi bi-cash-stack me-1"></i>Monto a invertir
         </label>
         <div class="input-group amount-input">
           <span class="input-group-text">$</span>
           <input
+            id="simulator-investment-amount"
             [ngModel]="amount()"
             (ngModelChange)="amount.set($event)"
             type="number"
@@ -77,6 +78,7 @@
         <div class="segmented">
           <button
             *ngFor="let t of TERMS"
+            [id]="'simulator-term-' + t.key"
             type="button"
             class="seg-item"
             [class.active]="term() === t.key"
@@ -89,6 +91,7 @@
 
       <div class="col-12 col-lg-auto">
         <button
+          id="simulator-submit"
           class="btn btn-primary px-4 cta-btn"
           [disabled]="!isValid() || loading()"
           (click)="onSimulate()"
@@ -105,7 +108,7 @@
       &middot; cada entidad ofrece tasas distintas segun el plazo, pruebalos todos
     </div>
 
-    <div *ngIf="error()" class="alert alert-danger mt-3 mb-0 py-2 small">
+    <div id="simulator-error" *ngIf="error()" class="alert alert-danger mt-3 mb-0 py-2 small">
       <i class="bi bi-exclamation-triangle me-1"></i>{{ error() }}
     </div>
   </div>
@@ -148,9 +151,10 @@
     </div>
   </div>
 
-  <div class="row g-3">
+  <div id="simulator-results" class="row g-3">
     <div
       *ngFor="let row of sortedResults(); let idx = index"
+      [id]="'simulator-offer-' + row.bank.id"
       class="col-12 col-md-6 col-xl-4"
     >
       <div class="card h-100 shadow-sm bank-card" [style.animationDelay]="idx * 55 + 'ms'">
@@ -214,6 +218,7 @@
 
           <!-- CTA -->
           <button
+            [id]="'simulator-offer-open-' + row.bank.id"
             class="btn btn-primary w-100 mt-3"
             [disabled]="openingId() !== null"
             (click)="openCdt(row)"
