@@ -47,13 +47,14 @@
         <p class="text-body-secondary small mb-4">
           Necesitamos algunos datos para cumplir la debida diligencia y precalificarte con la entidad.
         </p>
-        <app-process-form (saved)="onFormSaved()"></app-process-form>
+        <app-process-form id="process-stage-form" (saved)="onFormSaved()"></app-process-form>
       </ng-container>
 
       <!-- documents -->
       <ng-container *ngIf="stage() === 'documents'">
         <h5 class="fw-bold mb-1">Carga tu declaracion de renta</h5>
         <app-process-documents
+          id="process-stage-documents"
           [processId]="d.process.id"
           [files]="d.files"
           (uploaded)="refresh()"
