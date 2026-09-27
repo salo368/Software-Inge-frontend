@@ -3,8 +3,9 @@
   Aceptamos PDF, JPG o PNG.
 </p>
 
-<label class="upload-box" [class.uploaded]="declaracion" [class.opacity-75]="uploading()">
+<label id="process-documents-upload" class="upload-box" [class.uploaded]="declaracion" [class.opacity-75]="uploading()">
   <input
+    id="process-documents-input"
     type="file"
     class="d-none"
     accept="application/pdf,image/jpeg,image/png"
@@ -19,20 +20,20 @@
   ></i>
   <div class="flex-grow-1">
     <div class="fw-semibold">Declaracion de renta</div>
-    <div class="small text-body-secondary" *ngIf="uploading()">{{ progressMsg() }}</div>
-    <div class="small text-body-secondary" *ngIf="!uploading() && !declaracion">
+    <div id="process-documents-progress" class="small text-body-secondary" *ngIf="uploading()">{{ progressMsg() }}</div>
+    <div id="process-documents-empty" class="small text-body-secondary" *ngIf="!uploading() && !declaracion">
       Ultimo periodo disponible. PDF preferentemente.
     </div>
-    <div class="small text-body-secondary" *ngIf="!uploading() && declaracion">
+    <div id="process-documents-file" class="small text-body-secondary" *ngIf="!uploading() && declaracion">
       {{ declaracion.original_name || 'Documento cargado' }} &middot; toca para reemplazar
     </div>
   </div>
 </label>
 
-<div *ngIf="declaracion && !uploading()" class="text-end mt-2">
-  <button type="button" class="btn btn-sm btn-outline-primary" (click)="openFile()">
+<div id="process-documents-actions" *ngIf="declaracion && !uploading()" class="text-end mt-2">
+  <button id="process-documents-view" type="button" class="btn btn-sm btn-outline-primary" (click)="openFile()">
     <i class="bi bi-eye me-1"></i>Ver documento
   </button>
 </div>
 
-<div *ngIf="error()" class="alert alert-danger py-2 small mt-3 mb-0">{{ error() }}</div>
+<div id="process-documents-error" *ngIf="error()" class="alert alert-danger py-2 small mt-3 mb-0">{{ error() }}</div>
