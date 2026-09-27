@@ -6,7 +6,7 @@
         Accede para retomar tus procesos donde los dejaste.
       </p>
 
-      <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      <form id="portal-login-form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
         <div class="mb-3">
           <label class="form-label" for="login-email">Email</label>
           <input
@@ -33,10 +33,11 @@
         </div>
 
         @if (error()) {
-          <div class="alert alert-danger py-2 small">{{ error() }}</div>
+          <div id="portal-login-error" class="alert alert-danger py-2 small">{{ error() }}</div>
         }
 
         <button
+          id="portal-login-submit"
           type="submit"
           class="btn btn-primary w-100 mt-2"
           [disabled]="form.invalid || loading()"
@@ -47,7 +48,7 @@
 
       <p class="text-center small text-body-secondary mt-4 mb-0">
         ¿No tienes cuenta?
-        <a routerLink="/register" class="fw-semibold text-decoration-none">Regístrate</a>
+        <a id="portal-login-register" routerLink="/register" class="fw-semibold text-decoration-none">Regístrate</a>
       </p>
     </div>
   </section>
