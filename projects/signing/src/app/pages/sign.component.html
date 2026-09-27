@@ -8,18 +8,18 @@
 -->
 
 <!-- Missing / bad sign_id: rendered instead of the wizard. -->
-<div *ngIf="notFound()" class="text-center py-5">
+<div id="signing-not-found" *ngIf="notFound()" class="text-center py-5">
   <div class="empty-state-icon mb-3"><i class="bi bi-link-45deg"></i></div>
   <h5 class="fw-bold mb-2">Enlace no valido</h5>
   <p class="text-body-secondary mb-0">Este enlace de firma no existe o ya expiro.</p>
 </div>
 
 <!-- Loading -->
-<div *ngIf="!notFound() && !ceremony()" class="text-center py-5">
+<div id="signing-loading" *ngIf="!notFound() && !ceremony()" class="text-center py-5">
   <div class="spinner-border text-primary" role="status"></div>
 </div>
 
-<div *ngIf="ceremony() as c" class="mx-auto" style="max-width: 720px">
+<div id="signing-ceremony" *ngIf="ceremony() as c" class="mx-auto" style="max-width: 720px">
   <!-- Stepper (interactive screens only) -->
   <div *ngIf="showStepper()" class="stepper mb-4">
     <ng-container *ngFor="let s of STEPS; let i = index">
@@ -39,14 +39,14 @@
 
   <!-- Global inline error. Terminal errors (failed/expired) get their own
        screens; this bubble is for recoverable action errors. -->
-  <div *ngIf="error()" class="alert alert-danger d-flex align-items-center gap-2">
+  <div id="signing-error" *ngIf="error()" class="alert alert-danger d-flex align-items-center gap-2">
     <i class="bi bi-exclamation-triangle-fill"></i>{{ error() }}
   </div>
 
   <!-- ==================================================================== -->
   <!-- Screen: review                                                       -->
   <!-- ==================================================================== -->
-  <div *ngIf="screen() === 'review'" class="card shadow-sm">
+  <div id="signing-screen-review" *ngIf="screen() === 'review'" class="card shadow-sm">
     <div class="card-body p-4">
       <h5 class="fw-bold mb-1">
         Hola<span *ngIf="c.signer_name">, {{ c.signer_name }}</span>
@@ -60,7 +60,7 @@
         [x]="c.signature_location.x_pct"
         [y]="c.signature_location.y_pct"
       ></app-pdf-preview>
-      <button class="btn btn-primary w-100 mt-4 py-2" (click)="goToIdentity()">
+      <button id="signing-review-continue" class="btn btn-primary w-100 mt-4 py-2" (click)="goToIdentity()">
         Todo en orden, continuar<i class="bi bi-arrow-right ms-2"></i>
       </button>
     </div>

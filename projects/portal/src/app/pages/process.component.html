@@ -116,6 +116,7 @@
         </div>
 
         <button
+          id="process-signature-start"
           class="btn btn-primary w-100 py-2"
           [disabled]="signing() || signatureCta() === 'processing'"
           (click)="startSignature()"
