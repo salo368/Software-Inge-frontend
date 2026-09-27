@@ -63,7 +63,7 @@
 
       <!-- signature -->
       <ng-container *ngIf="stage() === 'signature'">
-        <h5 class="fw-bold mb-1">Firma tu orden de inversion</h5>
+        <h5 id="process-stage-signature" class="fw-bold mb-1">Firma tu orden de inversion</h5>
         <p class="text-body-secondary small mb-4">
           Te enviaremos un enlace seguro a tu correo (y podes abrirlo aca mismo). Revisas el
           documento, validas tu identidad con la camara y confirmas con un codigo de un solo uso.
@@ -179,12 +179,13 @@
         </div>
       </ng-container>
 
-      <div *ngIf="error()" class="alert alert-danger mt-3 py-2 small mb-0">{{ error() }}</div>
+      <div id="process-error" *ngIf="error()" class="alert alert-danger mt-3 py-2 small mb-0">{{ error() }}</div>
 
       <!-- Advance CTA. `form` is advanced by the sub-component, `signature` by
            the ceremony itself, and `done` has nothing left to do. -->
       <button
         *ngIf="stage() === 'documents' || stage() === 'payment'"
+        [id]="'process-advance-' + stage()"
         class="btn btn-primary w-100 mt-4 py-2"
         [disabled]="advancing()"
         (click)="advance()"
