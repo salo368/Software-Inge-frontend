@@ -215,29 +215,37 @@ export async function debugOtpSignature(
   if (!/^[0-9a-fA-F]+$/.test(debugKeyHex) || debugKeyHex.length % 2 !== 0) {
     throw new Error('debugKeyHex must be an even-length hex string');
   }
-  const keyBytes = new Uint8Array(debugKeyHex.length / 2);
-  for (let i = 0; i < debugKeyHex.length; i += 2) {
-    keyBytes[i / 2] = parseInt(debugKeyHex.substring(i, i + 2), 16);
-  }
+
+  // IMPORTANT:
+  // The backend stores the SSM value as a hexadecimal-looking STRING
+  // and uses `value.encode()` as the HMAC key.
+  //
+  // Therefore the browser must use the UTF-8 bytes of the 64-character
+  // string itself. It must NOT decode each pair of hex characters into
+  // a 32-byte binary key.
+  const keyBytes = new TextEncoder().encode(debugKeyHex);
+
   const cryptoKey = await crypto.subtle.importKey(
     'raw',
     keyBytes,
-    { name: 'HMAC', hash: 'SHA-256' },
+    {
+      name: 'HMAC',
+      hash: 'SHA-256',
+    },
     false,
     ['sign'],
   );
-  const sigBytes = new Uint8Array(
-    await crypto.subtle.sign(
-      'HMAC',
-      cryptoKey,
-      new TextEncoder().encode(signId),
-    ),
+
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    cryptoKey,
+    new TextEncoder().encode(signId),
   );
-  return Array.from(sigBytes)
+
+  return Array.from(new Uint8Array(signature))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 }
-
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
