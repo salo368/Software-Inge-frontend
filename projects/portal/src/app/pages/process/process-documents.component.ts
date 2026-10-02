@@ -10,6 +10,7 @@ import {
   signal,
 } from '@angular/core';
 
+import { DocumentStatusRow, DocumentsService } from '@shared/core/documents.service';
 import { FileRow, FilesService } from '@shared/core/files.service';
 
 const POLL_MS = 2000;
@@ -38,6 +39,22 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
     return this.files.find((f) => f.file_type === 'declaracion_renta');
   }
 
+  // --------------------------------------------------------------------
+  // C11 -- Capturar y validar documentación de soporte (cédula, frente).
+  // Backend y bucket propios (`documents`), separados de `files` -- por
+  // eso este bloque mantiene su propio polling, independiente del de
+  // `declaracion_renta` de arriba. Ver C11_Arquitectura_Mecanismos_y_
+  // Patrones.md §5 para el flujo completo.
+  // --------------------------------------------------------------------
+  private documentsApi = inject(DocumentsService);
+  private pollTimerId: number | null = null;
+  private attemptsId = 0;
+
+  uploadingId = signal(false);
+  progressMsgId = signal('');
+  errorId = signal<string | null>(null);
+  idFrontEstado = signal<DocumentStatusRow | null>(null);
+
   // The parent refreshes asynchronously after each `uploaded` emit, so the
   // registered row shows up here as a new `files` array rather than inline.
   ngOnChanges(): void {
@@ -46,6 +63,7 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
 
   ngOnDestroy(): void {
     this.clearTimer();
+    this.clearTimerId();
   }
 
   onFileChange(event: Event): void {
@@ -110,5 +128,90 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
     this.api.downloadUrl(f.id).subscribe({
       next: (r) => window.open(r.download_url, '_blank'),
     });
+  }
+
+  // --------------------------------------------------------------------
+  // C11 -- cédula (frente). Mismo patrón de carga + polling que arriba,
+  // pero consultando el estado de VALIDACIÓN (no solo "¿se subió?") --
+  // por eso usa su propio DocumentsService.status(), no FilesService.
+  // --------------------------------------------------------------------
+  onIdFrontFileChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    this.uploadIdFront(file);
+    input.value = '';
+  }
+
+  uploadIdFront(file: File): void {
+    if (this.uploadingId()) return;
+    this.uploadingId.set(true);
+    this.errorId.set(null);
+    this.progressMsgId.set('Subiendo...');
+    this.documentsApi.upload(this.processId, 'id_front', file).subscribe({
+      next: () => {
+        this.progressMsgId.set('Validando el documento...');
+        this.startPollingId();
+      },
+      error: () => {
+        this.uploadingId.set(false);
+        this.progressMsgId.set('');
+        this.errorId.set('No pudimos subir el archivo. Verifica el formato e intenta de nuevo.');
+      },
+    });
+  }
+
+  private startPollingId(): void {
+    this.attemptsId = 0;
+    this.clearTimerId();
+    this.refreshIdStatus();
+    this.pollTimerId = window.setInterval(() => {
+      this.attemptsId += 1;
+      if (this.attemptsId >= MAX_POLL) {
+        this.clearTimerId();
+        this.uploadingId.set(false);
+        this.progressMsgId.set('');
+        this.errorId.set('La validación está tardando. Recarga la página en unos segundos.');
+        return;
+      }
+      this.refreshIdStatus();
+    }, POLL_MS);
+  }
+
+  private refreshIdStatus(): void {
+    this.documentsApi.status(this.processId).subscribe({
+      next: (r) => {
+        const doc = r.documentos.find((d) => d.document_type === 'id_front') ?? null;
+        this.idFrontEstado.set(doc);
+        if (doc && (doc.stage === 'validado' || doc.stage === 'rechazado')) {
+          this.clearTimerId();
+          this.uploadingId.set(false);
+          this.progressMsgId.set('');
+          if (doc.stage === 'rechazado') {
+            this.errorId.set(this.mensajeRechazoId(doc.rejection_reason));
+          }
+        }
+      },
+      // Un fallo de red puntual durante el polling no debe matar el
+      // ciclo -- se reintenta en el próximo tick hasta MAX_POLL.
+      error: () => undefined,
+    });
+  }
+
+  private mensajeRechazoId(reason: string | null): string {
+    if (reason === 'documento_ilegible') {
+      return 'No pudimos leer la imagen. Intenta con mejor luz o enfoque.';
+    }
+    if (reason === 'no_corresponde') {
+      return 'El documento no corresponde con tus datos registrados.';
+    }
+    return 'El documento fue rechazado. Intenta de nuevo.';
+  }
+
+  private clearTimerId(): void {
+    if (this.pollTimerId !== null) {
+      window.clearInterval(this.pollTimerId);
+      this.pollTimerId = null;
+    }
   }
 }

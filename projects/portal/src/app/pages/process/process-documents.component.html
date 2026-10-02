@@ -37,3 +37,51 @@
 </div>
 
 <div id="process-documents-error" *ngIf="error()" class="alert alert-danger py-2 small mt-3 mb-0">{{ error() }}</div>
+
+<!-- C11 -- Capturar y validar documentación de soporte (cédula, frente). -->
+<label
+  id="process-documents-id-front-upload"
+  class="upload-box mt-3"
+  [class.uploaded]="idFrontEstado()?.stage === 'validado'"
+  [class.opacity-75]="uploadingId()"
+>
+  <input
+    id="process-documents-id-front-input"
+    type="file"
+    class="d-none"
+    accept="image/jpeg,image/png"
+    [disabled]="uploadingId()"
+    (change)="onIdFrontFileChange($event)"
+  />
+  <i
+    class="bi"
+    [class.bi-cloud-arrow-up]="!idFrontEstado() && !uploadingId()"
+    [class.bi-hourglass-split]="uploadingId()"
+    [class.bi-check-circle-fill]="idFrontEstado()?.stage === 'validado' && !uploadingId()"
+    [class.bi-x-circle-fill]="idFrontEstado()?.stage === 'rechazado' && !uploadingId()"
+  ></i>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Cédula (frente)</div>
+    <div id="process-documents-id-front-progress" class="small text-body-secondary" *ngIf="uploadingId()">
+      {{ progressMsgId() }}
+    </div>
+    <div
+      id="process-documents-id-front-empty"
+      class="small text-body-secondary"
+      *ngIf="!uploadingId() && !idFrontEstado()"
+    >
+      Foto clara del frente de tu cédula. JPG o PNG.
+    </div>
+    <div
+      id="process-documents-id-front-validado"
+      class="small text-body-secondary"
+      *ngIf="!uploadingId() && idFrontEstado()?.stage === 'validado'"
+    >
+      Documento validado &middot; toca para reemplazar
+    </div>
+  </div>
+</label>
+
+<div id="process-documents-id-front-error" *ngIf="errorId()" class="alert alert-danger py-2 small mt-3 mb-0">
+  {{ errorId() }}
+</div>
