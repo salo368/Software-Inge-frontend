@@ -30,6 +30,11 @@
     <div class="col-12 col-md-6 col-xl-4" *ngFor="let row of rows()">
       <a
         [id]="'portal-process-' + row.proc.id"
+        [attr.data-process-id]="row.proc.id"
+        [attr.data-bank-id]="row.proc.bank_id"
+        [attr.data-stage]="row.proc.stage"
+        [attr.data-amount]="row.proc.amount"
+        [attr.data-term-days]="row.proc.term_days"
         [routerLink]="['/process', row.proc.id]"
         class="card h-100 shadow-sm text-decoration-none text-body bank-card"
       >
