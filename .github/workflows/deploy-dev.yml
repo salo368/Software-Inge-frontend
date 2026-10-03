@@ -438,10 +438,10 @@ jobs:
       - name: Validate PAREX DEV secrets
         shell: bash
         env:
-          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
-          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.DEBUG_OTP_KEY_HEX }}
-          SIGNATURES_TEST_FACE_B64: ${{ secrets.SIGNATURES_TEST_FACE_B64 }}
+          TEST_USER_EMAIL: ${{ secrets.DEV_TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.DEV_TEST_USER_PASSWORD }}
+          DEBUG_OTP_KEY_HEX: ${{ secrets.DEV_DEBUG_OTP_KEY_HEX }}
+          SIGNATURES_TEST_FACE_B64: ${{ secrets.DEV_SIGNATURES_TEST_FACE_B64 }}
         run: |
           set -euo pipefail
 
@@ -462,7 +462,7 @@ jobs:
       - name: Materialize private face fixture
         shell: bash
         env:
-          SIGNATURES_TEST_FACE_B64: ${{ secrets.SIGNATURES_TEST_FACE_B64 }}
+          SIGNATURES_TEST_FACE_B64: ${{ secrets.DEV_SIGNATURES_TEST_FACE_B64 }}
         run: |
           set -euo pipefail
 
@@ -481,9 +481,9 @@ jobs:
         env:
           CI: "true"
           TEST_ENV: dev
-          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
-          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.DEBUG_OTP_KEY_HEX }}
+          TEST_USER_EMAIL: ${{ secrets.DEV_TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.DEV_TEST_USER_PASSWORD }}
+          DEBUG_OTP_KEY_HEX: ${{ secrets.DEV_DEBUG_OTP_KEY_HEX }}
         run: npm run parex:e2e
 
       - name: Upload PAREX evidence
