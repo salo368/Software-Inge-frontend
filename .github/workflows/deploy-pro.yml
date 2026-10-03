@@ -356,8 +356,8 @@ jobs:
       - name: Validate PAREX PRO secrets
         shell: bash
         env:
-          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
-          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+          TEST_USER_EMAIL: ${{ secrets.PRO_TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.PRO_TEST_USER_PASSWORD }}
         run: |
           set -euo pipefail
 
@@ -377,8 +377,8 @@ jobs:
         env:
           CI: "true"
           TEST_ENV: pro
-          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
-          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+          TEST_USER_EMAIL: ${{ secrets.PRO_TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.PRO_TEST_USER_PASSWORD }}
         run: npm run parex:e2e
 
       - name: Upload PAREX evidence
