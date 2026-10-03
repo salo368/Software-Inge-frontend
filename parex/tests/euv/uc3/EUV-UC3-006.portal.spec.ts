@@ -72,12 +72,12 @@ test(
 
         const idFront =
             readFixtureBase64(
-                'tests/fixtures/signing/id-front.png'
+                'parex/tests/fixtures/signing/id-front.png'
             );
 
         const idBack =
             readFixtureBase64(
-                'tests/fixtures/signing/id-back.png'
+                'parex/tests/fixtures/signing/id-back.png'
             );
 
         const face =

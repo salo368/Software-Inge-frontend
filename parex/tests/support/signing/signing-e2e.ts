@@ -620,12 +620,12 @@ export async function prepareSigningAtSignatureScreen(
 
     const idFront =
         readFixtureBase64(
-            'tests/fixtures/signing/id-front.png'
+            'parex/tests/fixtures/signing/id-front.png'
         );
 
     const idBack =
         readFixtureBase64(
-            'tests/fixtures/signing/id-back.png'
+            'parex/tests/fixtures/signing/id-back.png'
         );
 
     const face =
@@ -719,7 +719,7 @@ export async function prepareSigningAtConsentScreen(
 
     const signature =
         readFixtureBase64(
-            'tests/fixtures/signing/signature.png'
+            'parex/tests/fixtures/signing/signature.png'
         );
 
     await driver.submitSignature(
