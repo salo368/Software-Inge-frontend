@@ -44,7 +44,7 @@
  *
  * The hooks are installed if and only if BOTH of the following hold:
  *
- *   1. `environment.stage === 'dev'` (never in the pro bundle).
+ *   1. `environment.stage` is an E2E-enabled environment (`dev` or `pro`).
  *   2. The current URL contains `?e2e=1`.
  *
  * The `?e2e=1` gate exists so a compromised dev build alone isn't a
@@ -175,8 +175,8 @@ export interface SigningE2EApi {
 
 /**
  * Wire the hook object to `window.__signingE2E` if the guards allow.
- * Callable from `SignComponent.ngOnInit`. No-op in prod or without
- * `?e2e=1`.
+ * Callable from `SignComponent.ngOnInit`. No-op outside the explicitly
+ * enabled stages or without `?e2e=1`.
  *
  * We accept `SignComponent` as an opaque interface (via type-only
  * import so the hooks file doesn't itself trigger a circular
@@ -186,8 +186,9 @@ export function installSigningE2EHooks(
   component: SignComponent,
   stage: string,
 ): void {
-  // Prod builds never expose hooks, ever.
-  if (stage !== 'dev') return;
+  // Los hooks E2E solo están disponibles en ambientes controlados
+  // y requieren adicionalmente el opt-in explícito ?e2e=1.
+  if (stage !== 'dev' && stage !== 'pro') return;
 
   // Extra gate so a dev build served publicly still won't expose the
   // hooks unless the caller explicitly opted in on the URL.

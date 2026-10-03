@@ -59,7 +59,7 @@ test(
             testInfo.annotations.push({
                 type: 'blocked',
                 description:
-                    'DEBUG_OTP_KEY_HEX no está configurado en el entorno DEV.',
+                    'DEBUG_OTP_KEY_HEX no está configurado en el entorno de ejecución.',
             });
 
             test.skip(
