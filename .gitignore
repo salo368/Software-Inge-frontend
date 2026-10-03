@@ -51,3 +51,12 @@ Thumbs.db
 /playwright-report/
 /playwright/.cache/
 
+
+# PAREX Playwright
+/parex/.auth/
+/parex/.env.dev.local
+/parex/.env.pro.local
+/parex/playwright-report/
+/parex/test-results/
+
+/.auth/
