@@ -68,7 +68,7 @@ test(
 
         const signature =
             readFixtureBase64(
-                'tests/fixtures/signing/signature.png'
+                'parex/tests/fixtures/signing/signature.png'
             );
 
         await test.step(
