@@ -15,7 +15,9 @@
     "e2e:headed": "playwright test --headed --workers=1",
     "e2e:ui": "playwright test --ui",
     "deploy:dev": "serverless deploy --stage dev",
-    "deploy:pro": "serverless deploy --stage pro"
+    "deploy:pro": "serverless deploy --stage pro",
+    "parex:e2e": "playwright test --config=parex/playwright.config.ts",
+    "parex:e2e:report": "playwright show-report parex/playwright-report"
   },
   "private": true,
   "dependencies": {

@@ -307,3 +307,87 @@ jobs:
             echo ">"
             echo "> Integration is dev-only by design (\`block-package.yml\` gates it on \`stage=='dev'\`). Production runs never execute smoke tests against real infra to keep the prod environment clean."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------------
+  # 6) PAREX: post-deploy functional validation against PRO
+  # --------------------------------------------------------------------------
+  parex:
+    name: PAREX E2E
+    needs:
+      - plan
+      - validate
+      - infrastructure
+      - blocks
+
+    if: >
+      always() &&
+      (needs.validate.result == 'success' || needs.validate.result == 'skipped') &&
+      (needs.infrastructure.result == 'success' || needs.infrastructure.result == 'skipped') &&
+      (needs.blocks.result == 'success' || needs.blocks.result == 'skipped')
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    environment:
+      name: pro
+
+    # Temporalmente diagnóstica:
+    # PRO tiene un hallazgo abierto en EUV-UC3-004.
+    # Las pruebas se ejecutan y conservan evidencia sin invalidar
+    # un despliegue que ya finalizó correctamente.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Validate PAREX PRO secrets
+        shell: bash
+        env:
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          for variable in \
+            TEST_USER_EMAIL \
+            TEST_USER_PASSWORD
+          do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing PRO secret: ${variable}"
+              exit 1
+            fi
+          done
+
+          echo "PAREX PRO prerequisites are configured."
+
+      - name: Run PAREX against PRO
+        env:
+          CI: "true"
+          TEST_ENV: pro
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+        run: npm run parex:e2e
+
+      - name: Upload PAREX evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parex-pro-${{ github.run_id }}
+          path: |
+            parex/playwright-report/
+            parex/test-results/
+          if-no-files-found: warn
+          retention-days: 14
