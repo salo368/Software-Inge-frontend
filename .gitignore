@@ -58,3 +58,5 @@ Thumbs.db
 /parex/.env.pro.local
 /parex/playwright-report/
 /parex/test-results/
+
+/.auth/

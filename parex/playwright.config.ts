@@ -152,11 +152,7 @@ export default defineConfig({
                 ],
 
                 storageState:
-                    path.join(
-                        parexRoot,
-                        '.auth',
-                        `${target}-user.json`
-                    ),
+                    `.auth/${target}-user.json`,
             },
         },
 
