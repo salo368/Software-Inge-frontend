@@ -95,6 +95,18 @@ export async function prepareSimulatorOffer(
      * arbitrario. La promesa se registra ANTES del click para no
      * perder respuestas rápidas.
      */
+    const pageErrors: string[] = [];
+
+    const pageErrorListener =
+        (error: Error) => {
+            pageErrors.push(error.message);
+        };
+
+    page.on(
+        'pageerror',
+        pageErrorListener
+    );
+
     const simulationResponsePromise =
         page.waitForResponse(
             (response) =>
@@ -115,6 +127,14 @@ export async function prepareSimulatorOffer(
     const simulationBody =
         await simulationResponse.text();
 
+    console.log(
+        [
+            '[PAREX] POST /banks/simulate',
+            `status=${simulationResponse.status()}`,
+            `body=${simulationBody.slice(0, 1000)}`,
+        ].join(' · ')
+    );
+
     expect(
         simulationResponse.ok(),
         [
@@ -124,19 +144,109 @@ export async function prepareSimulatorOffer(
         ].join(' · ')
     ).toBeTruthy();
 
-    /*
-     * Si el servicio respondió correctamente Angular debe abandonar
-     * loading y renderizar los resultados sin error funcional.
-     */
-    await expect(
-        page.locator('#simulator-error')
-    ).toHaveCount(0);
+    let simulationPayload: unknown;
 
-    await expect(
-        page.locator('#simulator-results')
-    ).toBeVisible({
-        timeout: 15_000,
-    });
+    try {
+        simulationPayload =
+            JSON.parse(simulationBody);
+    } catch {
+        throw new Error(
+            [
+                'POST /banks/simulate respondió 2xx',
+                'pero el body no es JSON válido',
+                `body=${simulationBody.slice(0, 500)}`,
+            ].join(' · ')
+        );
+    }
+
+    expect(
+        simulationPayload !== null &&
+        typeof simulationPayload === 'object' &&
+        Array.isArray(
+            (
+                simulationPayload as {
+                    results?: unknown;
+                }
+            ).results
+        ),
+        [
+            'POST /banks/simulate respondió 2xx',
+            'pero no cumple el contrato esperado { results: [] }',
+            `body=${simulationBody.slice(0, 500)}`,
+        ].join(' · ')
+    ).toBeTruthy();
+
+    const simulatorResults =
+        page.locator('#simulator-results');
+
+    const simulatorError =
+        page.locator('#simulator-error');
+
+    try {
+        await expect
+            .poll(
+                async () => {
+                    if (pageErrors.length > 0) {
+                        return 'page-error';
+                    }
+
+                    if (
+                        await simulatorError
+                            .isVisible()
+                            .catch(() => false)
+                    ) {
+                        return 'simulator-error';
+                    }
+
+                    if (
+                        await simulatorResults
+                            .isVisible()
+                            .catch(() => false)
+                    ) {
+                        return 'results';
+                    }
+
+                    return 'loading';
+                },
+                {
+                    timeout: 15_000,
+                    message:
+                        'el simulador debe terminar mostrando resultados o un error observable',
+                }
+            )
+            .not.toBe('loading');
+
+        if (pageErrors.length > 0) {
+            throw new Error(
+                [
+                    'El navegador lanzó un error JavaScript después de la simulación',
+                    ...pageErrors,
+                ].join(' · ')
+            );
+        }
+
+        if (
+            await simulatorError
+                .isVisible()
+                .catch(() => false)
+        ) {
+            throw new Error(
+                `El simulador mostró error: ${
+                    await simulatorError
+                        .textContent()
+                }`
+            );
+        }
+
+        await expect(
+            simulatorResults
+        ).toBeVisible();
+    } finally {
+        page.off(
+            'pageerror',
+            pageErrorListener
+        );
+    }
 
     /*
      * Descubrimos las identidades de dominio disponibles.
