@@ -383,9 +383,9 @@ export class SignComponent implements OnInit, OnDestroy {
     this.returnUrl = resolveReturnUrl(
       this.route.snapshot.queryParamMap.get(RETURN_URL_QUERY_PARAM),
     );
-    // Playwright / E2E hook. No-op unless BOTH `stage === 'dev'` AND
-    // the URL carries `?e2e=1`. See core/e2e-hooks.ts for the security
-    // rationale.
+    // Playwright / E2E hook. No-op unless the current stage is explicitly
+    // E2E-enabled AND the URL carries `?e2e=1`.
+    // See core/e2e-hooks.ts for the security rationale.
     installSigningE2EHooks(this, environment.stage);
   }
 
@@ -613,11 +613,11 @@ export class SignComponent implements OnInit, OnDestroy {
   }
 
   private sendOtpAfterConsent(): void {
-    // When the E2E hook installed a debug OTP HMAC key (dev + `?e2e=1`
-    // only, see core/e2e-hooks.ts), we forward it to requestOtp so the
-    // backend echoes the plaintext OTP back in the response. In every
-    // other case (prod, real users) this is empty and the call is
-    // identical to before.
+    // When the E2E hook installed a debug OTP HMAC key (`?e2e=1`
+    // in an E2E-enabled stage), we forward it to requestOtp so the
+    // backend echoes the plaintext OTP back in the response. When no
+    // E2E debug key is installed, this remains empty and the call is
+    // identical to the normal user flow.
     const debugKey = getInstalledDebugOtpKey();
     this.api.requestOtp(this.signId, debugKey || undefined).subscribe({
       next: (r) => {

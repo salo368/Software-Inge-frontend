@@ -44,20 +44,11 @@ dotenv.config({
 });
 
 /*
- * La parte sensible de la ceremonia automatizada
- * permanece DEV-only.
- *
- * En PRO podemos ejecutar hasta EUV-UC3-005.
+ * La misma suite PAREX se ejecuta en DEV y PRO.
+ * Las capacidades E2E sensibles requieren opt-in explícito y
+ * credenciales de automatización configuradas por ambiente.
  */
-const environmentIgnores =
-    target === 'pro'
-        ? [
-            /EUV-UC3-006\.portal\.spec\.ts$/,
-            /EUV-UC3-007\.portal\.spec\.ts$/,
-            /EUV-UC3-008\.portal\.spec\.ts$/,
-            /EUV-UC3-009\.portal\.spec\.ts$/,
-        ]
-        : [];
+const environmentIgnores: RegExp[] = [];
 
 console.log('');
 console.log(

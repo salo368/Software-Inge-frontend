@@ -48,7 +48,7 @@ src/app/
 ├── core/
 │   ├── signatures.service.ts      # cliente HTTP v2 (11 endpoints + tipos)
 │   ├── host-app.ts                # validación de ?return_url (same-origin only)
-│   └── e2e-hooks.ts               # window.__signingE2E (dev + ?e2e=1)
+│   └── e2e-hooks.ts               # window.__signingE2E (E2E-enabled stage + ?e2e=1)
 ├── pages/
 │   ├── sign.component.ts          # wizard state machine
 │   ├── sign.component.html
@@ -91,8 +91,8 @@ El header del archivo repite estas instrucciones.
   con `window.location`. URLs off-origin se descartan silenciosamente.
   Defensa contra `?return_url=https://evil.com/steal` en un email
   interceptado (ver `core/host-app.ts`).
-* **Test hooks** aparecen solo si BOTH `stage === 'dev'` AND `?e2e=1`.
-  Nunca en pro. Ver `core/e2e-hooks.ts` para el argumento completo.
+* **Test hooks** aparecen solo en stages E2E habilitados (`dev`/`pro`) y con `?e2e=1`.
+  Requieren opt-in explícito y credenciales de automatización. Ver `core/e2e-hooks.ts`.
 * **Debug OTP** — la SPA nunca sabe el HMAC key por sí sola. El
   Playwright driver lo inyecta vía `setDebugOtpKey(hex)` y la SPA lo
   reenvía al backend en `X-Debug-OTP-Signature`. En pro el key no
