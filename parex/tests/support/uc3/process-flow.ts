@@ -87,13 +87,56 @@ export async function prepareSimulatorOffer(
         .locator(`#simulator-term-${termDays}`)
         .click();
 
+    /*
+     * En CI la simulación puede tardar más que el timeout visual
+     * por cold start / latencia del servicio.
+     *
+     * Esperamos el contrato HTTP real en lugar de dormir un tiempo
+     * arbitrario. La promesa se registra ANTES del click para no
+     * perder respuestas rápidas.
+     */
+    const simulationResponsePromise =
+        page.waitForResponse(
+            (response) =>
+                response.request().method() === 'POST' &&
+                response.url().includes('/banks/simulate'),
+            {
+                timeout: 60_000,
+            }
+        );
+
     await page
         .locator('#simulator-submit')
         .click();
 
+    const simulationResponse =
+        await simulationResponsePromise;
+
+    const simulationBody =
+        await simulationResponse.text();
+
+    expect(
+        simulationResponse.ok(),
+        [
+            'la simulación debe responder correctamente',
+            `status=${simulationResponse.status()}`,
+            `body=${simulationBody.slice(0, 500)}`,
+        ].join(' · ')
+    ).toBeTruthy();
+
+    /*
+     * Si el servicio respondió correctamente Angular debe abandonar
+     * loading y renderizar los resultados sin error funcional.
+     */
+    await expect(
+        page.locator('#simulator-error')
+    ).toHaveCount(0);
+
     await expect(
         page.locator('#simulator-results')
-    ).toBeVisible();
+    ).toBeVisible({
+        timeout: 15_000,
+    });
 
     /*
      * Descubrimos las identidades de dominio disponibles.
