@@ -40,6 +40,18 @@ interface StatusResponse {
   documentos: DocumentStatusRow[];
 }
 
+export interface ReuseCandidate {
+  id: string;
+  document_type: DocumentType | string;
+  validated_at: string;
+  hash_sha256: string;
+}
+
+interface CheckReuseResponse {
+  reutilizable: boolean;
+  documento?: ReuseCandidate;
+}
+
 @Injectable({ providedIn: 'root' })
 export class DocumentsService {
   private http = inject(HttpClient);
@@ -77,6 +89,31 @@ export class DocumentsService {
   status(processId: string): Observable<StatusResponse> {
     return this.http.get<StatusResponse>(`${this.base}/documents/status`, {
       params: { process_id: processId },
+    });
+  }
+
+  /**
+   * FA1 (reutilización de vigentes): ¿el inversionista ya tiene, de un
+   * proceso anterior, un documento de este tipo todavía vigente? Se llama
+   * antes de mostrar el selector de archivo, para ofrecer reutilizar en
+   * vez de forzar una nueva carga.
+   */
+  checkReuse(processId: string, documentType: DocumentType): Observable<CheckReuseResponse> {
+    return this.http.get<CheckReuseResponse>(`${this.base}/documents/check-reuse`, {
+      params: { process_id: processId, document_type: documentType },
+    });
+  }
+
+  /** FA1: confirma la reutilización ofrecida por checkReuse(). */
+  confirmReuse(
+    processId: string,
+    documentType: DocumentType,
+    sourceDocumentId: string,
+  ): Observable<DocumentStatusRow> {
+    return this.http.post<DocumentStatusRow>(`${this.base}/documents/confirm-reuse`, {
+      process_id: processId,
+      document_type: documentType,
+      source_document_id: sourceDocumentId,
     });
   }
 }

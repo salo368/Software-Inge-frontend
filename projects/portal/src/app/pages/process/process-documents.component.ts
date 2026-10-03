@@ -10,7 +10,7 @@ import {
   signal,
 } from '@angular/core';
 
-import { DocumentStatusRow, DocumentsService } from '@shared/core/documents.service';
+import { DocumentStatusRow, DocumentsService, ReuseCandidate } from '@shared/core/documents.service';
 import { FileRow, FilesService } from '@shared/core/files.service';
 
 const POLL_MS = 2000;
@@ -55,10 +55,23 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
   errorId = signal<string | null>(null);
   idFrontEstado = signal<DocumentStatusRow | null>(null);
 
+  // FA1 (reutilización de vigentes): si el inversionista ya tiene, de un
+  // proceso anterior, un id_front validado y todavía vigente, se ofrece
+  // reutilizarlo en vez de forzar una carga nueva. `reuseChecked` evita
+  // repetir la consulta en cada ngOnChanges -- solo importa la primera vez
+  // que processId está disponible y todavía no hay nada cargado aquí.
+  reuseCandidate = signal<ReuseCandidate | null>(null);
+  reusingId = signal(false);
+  private reuseChecked = false;
+
   // The parent refreshes asynchronously after each `uploaded` emit, so the
   // registered row shows up here as a new `files` array rather than inline.
   ngOnChanges(): void {
     if (this.uploading() && this.declaracion) this.stopPolling('');
+    if (this.processId && !this.reuseChecked && !this.idFrontEstado()) {
+      this.reuseChecked = true;
+      this.checkIdFrontReuse();
+    }
   }
 
   ngOnDestroy(): void {
@@ -145,6 +158,7 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
 
   uploadIdFront(file: File): void {
     if (this.uploadingId()) return;
+    this.reuseCandidate.set(null);
     this.uploadingId.set(true);
     this.errorId.set(null);
     this.progressMsgId.set('Subiendo...');
@@ -205,7 +219,45 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
     if (reason === 'no_corresponde') {
       return 'El documento no corresponde con tus datos registrados.';
     }
+    if (reason === 'formato_no_admitido') {
+      return 'El archivo no es una imagen válida (JPEG o PNG). Verifica el formato e intenta de nuevo.';
+    }
     return 'El documento fue rechazado. Intenta de nuevo.';
+  }
+
+  // --------------------------------------------------------------------
+  // FA1 -- reutilización de un id_front vigente de un proceso anterior.
+  // --------------------------------------------------------------------
+  private checkIdFrontReuse(): void {
+    this.documentsApi.checkReuse(this.processId, 'id_front').subscribe({
+      next: (r) => this.reuseCandidate.set(r.reutilizable ? r.documento ?? null : null),
+      // Si la consulta falla, se degrada en silencio al flujo normal de
+      // carga -- no es un error que deba bloquear ni mostrarse.
+      error: () => this.reuseCandidate.set(null),
+    });
+  }
+
+  confirmIdFrontReuse(): void {
+    const candidato = this.reuseCandidate();
+    if (!candidato || this.reusingId()) return;
+    this.reusingId.set(true);
+    this.errorId.set(null);
+    this.documentsApi.confirmReuse(this.processId, 'id_front', candidato.id).subscribe({
+      next: (doc) => {
+        this.reusingId.set(false);
+        this.reuseCandidate.set(null);
+        this.idFrontEstado.set(doc);
+      },
+      error: () => {
+        this.reusingId.set(false);
+        this.errorId.set('No pudimos reutilizar el documento anterior. Carga uno nuevo.');
+        this.reuseCandidate.set(null);
+      },
+    });
+  }
+
+  declineIdFrontReuse(): void {
+    this.reuseCandidate.set(null);
   }
 
   private clearTimerId(): void {
