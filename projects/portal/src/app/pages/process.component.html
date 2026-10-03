@@ -134,7 +134,7 @@
 
       <!-- payment (mocked) -->
       <ng-container *ngIf="stage() === 'payment'">
-        <h5 class="fw-bold mb-1">Fondea tu CDT</h5>
+        <h5 id="process-stage-payment" class="fw-bold mb-1">Fondea tu CDT</h5>
         <p class="text-body-secondary small mb-4">
           Elige como transferir {{ formatCOP(d.process.amount) }}. El pago tambien esta simulado por ahora.
         </p>
@@ -149,7 +149,7 @@
 
       <!-- done -->
       <ng-container *ngIf="stage() === 'done'">
-        <div class="text-center">
+        <div id="process-stage-done" class="text-center">
           <div
             class="empty-state-icon mb-3"
             style="background: linear-gradient(135deg, #dcfce7, #d1fae5); color: #059669"
@@ -176,7 +176,7 @@
               <span class="fw-bold"><app-animated-money [value]="finalAmount()"></app-animated-money></span>
             </div>
           </div>
-          <a routerLink="/me" class="btn btn-primary px-4">Ir a mis procesos</a>
+          <a id="process-done-to-account" routerLink="/me" class="btn btn-primary px-4">Ir a mis procesos</a>
         </div>
       </ng-container>
 
