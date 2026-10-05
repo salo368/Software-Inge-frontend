@@ -59,7 +59,7 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
   // proceso anterior, un id_front validado y todavía vigente, se ofrece
   // reutilizarlo en vez de forzar una carga nueva. `reuseChecked` evita
   // repetir la consulta en cada ngOnChanges -- solo importa la primera vez
-  // que processId está disponible y todavía no hay nada cargado aquí.
+  // que processId está disponible.
   reuseCandidate = signal<ReuseCandidate | null>(null);
   reusingId = signal(false);
   private reuseChecked = false;
@@ -68,10 +68,34 @@ export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
   // registered row shows up here as a new `files` array rather than inline.
   ngOnChanges(): void {
     if (this.uploading() && this.declaracion) this.stopPolling('');
-    if (this.processId && !this.reuseChecked && !this.idFrontEstado()) {
+    if (this.processId && !this.reuseChecked) {
       this.reuseChecked = true;
-      this.checkIdFrontReuse();
+      this.loadInitialIdFrontState();
     }
+  }
+
+  /**
+   * Corrección encontrada en revisión antes del PR: el componente nunca
+   * consultaba el estado de id_front al cargar, solo durante el polling
+   * posterior a una subida. Eso dejaba dos problemas: si el inversionista
+   * ya tenía su cédula validada en ESTE proceso (por ejemplo, volvió a
+   * esta página en otra sesión), la caja de carga aparecía vacía en vez de
+   * mostrar el documento ya validado; y la oferta de reutilización de FA1
+   * podía terminar ofreciendo "reutilizar" el mismo documento que ya está
+   * en este proceso, porque get_vigente no excluye el proceso actual.
+   * Consultar el estado primero, y solo ofrecer reutilización cuando
+   * todavía no hay un id_front validado aquí, resuelve los dos a la vez.
+   */
+  private loadInitialIdFrontState(): void {
+    this.documentsApi.status(this.processId).subscribe({
+      next: (r) => {
+        const doc = r.documentos.find((d) => d.document_type === 'id_front') ?? null;
+        this.idFrontEstado.set(doc);
+        if (doc?.stage === 'rechazado') this.errorId.set(this.mensajeRechazoId(doc.rejection_reason));
+        if (!doc || doc.stage !== 'validado') this.checkIdFrontReuse();
+      },
+      error: () => this.checkIdFrontReuse(),
+    });
   }
 
   ngOnDestroy(): void {
