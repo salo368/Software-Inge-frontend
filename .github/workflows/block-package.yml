@@ -218,6 +218,11 @@ jobs:
   #    Optional today: the detect step looks for `projects/<block>/e2e/`
   #    (Playwright convention) OR `projects/<block>/cypress/`. If neither
   #    exists we skip cleanly with a ::notice::.
+  #
+  #    NOT the same mechanism as PAREX (parex/, job 6 in deploy-dev.yml):
+  #    this job is scoped to ONE block's own output; PAREX runs once, after
+  #    every block deployed, and validates flows that cross blocks. Neither
+  #    replaces the other. See parex/README.md.
   # --------------------------------------------------------------------------
   integration:
     name: Integration
