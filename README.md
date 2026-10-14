@@ -157,7 +157,7 @@ Los dos workflows contienen la pipeline **inline** (misma convención que
 backend: cada stage tiene su propio archivo con `stage` hardcodeado, y ambos
 comparten [`block-package.yml`](./.github/workflows/block-package.yml) como
 subworkflow reusable por bloque en el matrix). Forma:
-`plan → validate → infrastructure → blocks[matrix] → summary`.
+`plan → validate → infrastructure → blocks[matrix] → summary → parex`.
 
 1. **Plan** — [`scripts/ci/plan-deploy.sh`](./scripts/ci/plan-deploy.sh) mira el
    diff (anclado al **ultimo deploy exitoso** de este workflow en la rama, no al
@@ -212,6 +212,12 @@ subworkflow reusable por bloque en el matrix). Forma:
 5. **Summary** — descarga los artifacts `block-status-*` +
    `infrastructure-status` y renderiza una tabla por bloque/stage con donde
    paro cada uno, la URL desplegada y el estado de tests/integration.
+6. **PAREX** — dev-only y **non-blocking** (igual que `integration`, pero a
+   nivel de todo el deploy, no por bloque). Corre después de que `blocks`
+   termino, instala Chromium y ejecuta `npm run parex:e2e` contra la URL de
+   CloudFront recien desplegada. Sube el reporte HTML como artifact. Ver
+   [`parex/README.md`](./parex/README.md) para la suite completa y por que
+   es un mecanismo distinto del `integration` del punto 4.
 
 Para desplegar un bloque a mano, correr el workflow con `block: portal`. Para
 forzar el paso de infra sin tocar `serverless.yml`, con `force_infra: true`.
@@ -220,10 +226,15 @@ Para redeploy completo, `block: __all__`.
 > Todavia no hay `*.spec.ts` ni `projects/<block>/e2e/` — el pipeline los
 > **skippea limpiamente**, marcando la celda como `no specs` / `no e2e` en el
 > summary. Cuando se agreguen, el pipeline los recoge sin cambios en workflow.
+> Esto es **distinto** de PAREX (punto 6): PAREX ya tiene specs reales y
+> corre en cada deploy a dev, pero valida los tres bloques juntos desde
+> `parex/`, no reemplaza al `integration` por bloque si algún día se
+> necesita una suite propia de un solo bloque.
 >
-> Para la ceremonia de firma **ya existe** una suite Playwright, pero vive a
-> nivel de repo (`e2e/`, no `projects/signing/e2e/`) porque cruza dos bloques
-> (portal → signing → portal). Corre en dispatch manual via
+> Para la ceremonia de firma **ya existe**, además, una suite Playwright más
+> antigua y más angosta, pero vive a nivel de repo (`e2e/`, no
+> `projects/signing/e2e/`) porque cruza dos bloques (portal → signing →
+> portal). Corre en dispatch manual via
 > [`.github/workflows/e2e.yml`](./.github/workflows/e2e.yml), no en el critical
 > path del deploy. Ver [`e2e/README.md`](./e2e/README.md).
 
