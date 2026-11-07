@@ -44,7 +44,8 @@
  *
  * The hooks are installed if and only if BOTH of the following hold:
  *
- *   1. `environment.stage` is an E2E-enabled environment (`dev` or `pro`).
+ *   1. `environment.stage` is an E2E-enabled environment (`dev`, `staging`
+ *      or `pro`).
  *   2. The current URL contains `?e2e=1`.
  *
  * The `?e2e=1` gate exists so a compromised dev build alone isn't a
@@ -188,7 +189,7 @@ export function installSigningE2EHooks(
 ): void {
   // Los hooks E2E solo están disponibles en ambientes controlados
   // y requieren adicionalmente el opt-in explícito ?e2e=1.
-  if (stage !== 'dev' && stage !== 'pro') return;
+  if (stage !== 'dev' && stage !== 'staging' && stage !== 'pro') return;
 
   // Extra gate so a dev build served publicly still won't expose the
   // hooks unless the caller explicitly opted in on the URL.
