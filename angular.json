@@ -62,6 +62,18 @@
               "extractLicenses": false,
               "sourceMap": false,
               "outputHashing": "all"
+            },
+            "staging": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/shared/src/environments/environment.ts",
+                  "with": "projects/shared/src/environments/environment.staging.ts"
+                }
+              ],
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
             }
           },
           "defaultConfiguration": "dev"
@@ -77,6 +89,9 @@
             },
             "dev": {
               "buildTarget": "simulator:build:dev"
+            },
+            "staging": {
+              "buildTarget": "simulator:build:staging"
             }
           },
           "defaultConfiguration": "dev"
@@ -137,6 +152,18 @@
               "extractLicenses": false,
               "sourceMap": false,
               "outputHashing": "all"
+            },
+            "staging": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/shared/src/environments/environment.ts",
+                  "with": "projects/shared/src/environments/environment.staging.ts"
+                }
+              ],
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
             }
           },
           "defaultConfiguration": "dev"
@@ -152,6 +179,9 @@
             },
             "dev": {
               "buildTarget": "portal:build:dev"
+            },
+            "staging": {
+              "buildTarget": "portal:build:staging"
             }
           },
           "defaultConfiguration": "dev"
@@ -235,6 +265,18 @@
               "extractLicenses": false,
               "sourceMap": false,
               "outputHashing": "all"
+            },
+            "staging": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/signing/src/environments/environment.ts",
+                  "with": "projects/signing/src/environments/environment.staging.ts"
+                }
+              ],
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
             }
           },
           "defaultConfiguration": "dev"
@@ -250,6 +292,9 @@
             },
             "dev": {
               "buildTarget": "signing:build:dev"
+            },
+            "staging": {
+              "buildTarget": "signing:build:staging"
             }
           },
           "defaultConfiguration": "dev"

@@ -10,11 +10,13 @@ otro.
 |---|---|
 | Policy | `arn:aws:iam::658548982073:policy/CdtsFrontendDeploy` |
 | User (dev) | `arn:aws:iam::658548982073:user/githubactions/github-actions-dev-frontend-deployer` |
+| User (staging) | `arn:aws:iam::658548982073:user/githubactions/github-actions-staging-frontend-deployer` |
 | User (pro) | `arn:aws:iam::658548982073:user/githubactions/github-actions-pro-frontend-deployer` |
 
 Las access keys estan cargadas como GitHub Environment Secrets:
 
 - Environment `dev` -> `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- Environment `staging` -> `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 - Environment `pro` -> `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
 
 La region es una repo variable: `AWS_REGION=us-east-1`.
@@ -64,7 +66,7 @@ POLICY_ARN=$(aws iam list-policies --scope Local \
   --query "Policies[?PolicyName=='CdtsFrontendDeploy'].Arn | [0]" --output text)
 
 # 2) Crear usuarios y adjuntar la policy
-for stage in dev pro; do
+for stage in dev staging pro; do
   user="github-actions-${stage}-frontend-deployer"
   aws iam create-user --user-name "$user" --path /githubactions/ \
     --tags Key=Project,Value=cdts Key=Stage,Value=$stage Key=Component,Value=frontend
@@ -72,7 +74,7 @@ for stage in dev pro; do
 done
 
 # 3) Generar access keys y cargarlas como GitHub environment secrets
-for stage in dev pro; do
+for stage in dev staging pro; do
   user="github-actions-${stage}-frontend-deployer"
   OUT=$(aws iam create-access-key --user-name "$user" \
     --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
@@ -106,7 +108,7 @@ IAM guarda maximo 5 versiones: si falla por ese limite, borrar la mas vieja con
 AWS recomienda rotar access keys cada 90 dias:
 
 ```bash
-STAGE=dev  # o pro
+STAGE=dev  # o staging, o pro
 user="github-actions-${STAGE}-frontend-deployer"
 
 OUT=$(aws iam create-access-key --user-name "$user" \

@@ -109,18 +109,24 @@ propio `angular.json` para que el layout en S3 no pueda desalinearse del build.
 
 ## Ambientes
 
-Solo dos stages: `dev` y `pro`. No usar `prod`, `staging`, `qa`.
+Tres stages: `dev`, `staging` y `pro`. No usar `prod`, `qa`, `test`.
 
 | Stage | Rama | GitHub Environment | Usuario IAM |
 |---|---|---|---|
 | `dev` | `develop` | `dev` | `github-actions-dev-frontend-deployer` |
+| `staging` | `staging` | `staging` | `github-actions-staging-frontend-deployer` |
 | `pro` | `main` | `pro` | `github-actions-pro-frontend-deployer` |
 
 Region unica `us-east-1`, cuenta AWS `658548982073` (la misma del backend).
 
-Las configuraciones de Angular se llaman `dev` y `pro` (renombradas de las
-`development`/`production` que genera el CLI). `pro` usa `fileReplacements` para
-sustituir los `environment.ts` por los `environment.pro.ts`.
+`staging` es una copia de `develop` contra el backend `staging` (stacks
+`cdts-staging-*`, schema `staging`). La rama `staging` avanza solo por PRs
+`develop -> staging`.
+
+Las configuraciones de Angular se llaman `dev`, `staging` y `pro` (renombradas de
+las `development`/`production` que genera el CLI). `staging` y `pro` usan
+`fileReplacements` para sustituir los `environment.ts` por los
+`environment.staging.ts` / `environment.pro.ts`.
 
 ## Setup local
 
@@ -151,9 +157,10 @@ Los artefactos quedan en `dist/<bloque>/browser/`.
 ## Deploy
 
 Va por GitHub Actions: push a `develop` despliega `dev` (workflow
-[`deploy-dev.yml`](./.github/workflows/deploy-dev.yml)), push a `main`
-despliega `pro` (workflow [`deploy-pro.yml`](./.github/workflows/deploy-pro.yml)).
-Los dos workflows contienen la pipeline **inline** (misma convención que
+[`deploy-dev.yml`](./.github/workflows/deploy-dev.yml)), push a `staging`
+despliega `staging` (workflow [`deploy-staging.yml`](./.github/workflows/deploy-staging.yml)),
+push a `main` despliega `pro` (workflow [`deploy-pro.yml`](./.github/workflows/deploy-pro.yml)).
+Los tres workflows contienen la pipeline **inline** (misma convención que
 backend: cada stage tiene su propio archivo con `stage` hardcodeado, y ambos
 comparten [`block-package.yml`](./.github/workflows/block-package.yml) como
 subworkflow reusable por bloque en el matrix). Forma:
@@ -206,7 +213,7 @@ subworkflow reusable por bloque en el matrix). Forma:
      mal y sirve los `.js` como `text/plain`, lo que rompe la SPA), aplica
      `Cache-Control: immutable` a los assets hasheados y `no-cache` a
      `index.html`, borra huerfanos e invalida **solo las rutas de ese bloque**.
-   - **integration**: dev-only y **non-blocking**. Detecta `projects/<block>/e2e/`
+   - **integration**: dev + staging (nunca pro) y **non-blocking**. Detecta `projects/<block>/e2e/`
      (Playwright) o `projects/<block>/cypress/` (Cypress). Sin suite, skip con
      `::notice::` (verde). Con suite, corre contra la URL recien desplegada.
 5. **Summary** — descarga los artifacts `block-status-*` +
@@ -255,3 +262,5 @@ El plan de deploy lo descubre solo: no hay que registrarlo en ningun script.
 - Ramas desde `main`: `feat/<nombre>`, `fix/<nombre>`, `chore/<nombre>`.
 - Cada rama abre dos PRs: uno a `develop` (desplegar y probar en dev) y otro a
   `main` (desplegar en pro). `develop` y `main` nunca se mergean entre si.
+- `staging` no recibe ramas feature: se actualiza con un PR `develop -> staging`
+  (merge commit). Nunca abrir PRs desde `staging` hacia `develop` o `main`.
