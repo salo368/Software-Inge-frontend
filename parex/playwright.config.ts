@@ -17,7 +17,7 @@ const target =
 
 if (!(target in environments)) {
     throw new Error(
-        `TEST_ENV inválido: "${target}". Usa "dev" o "pro".`
+        `TEST_ENV inválido: "${target}". Usa "dev", "staging" o "pro".`
     );
 }
 

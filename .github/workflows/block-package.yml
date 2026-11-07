@@ -10,9 +10,9 @@ name: Block Package
 #
 # Contract with the caller:
 #   * `block` is the folder name under projects/<block>/.
-#   * `stage` is 'dev' or 'pro'. The `integration` job only runs when
-#     stage == 'dev' -- production must not have throwaway browser
-#     sessions polluting the environment.
+#   * `stage` is 'dev', 'staging' or 'pro'. The `integration` job runs on
+#     every stage except 'pro' -- production must not have throwaway
+#     browser sessions polluting the environment.
 #   * AWS credentials come from `secrets: inherit` on the caller. Each
 #     job that needs them declares `environment: ${{ inputs.stage }}` so
 #     the env-scoped secrets resolve at that point.
@@ -34,7 +34,7 @@ on:
         type: string
         required: true
       stage:
-        description: "'dev' or 'pro'. Integration is skipped when 'pro'."
+        description: "'dev', 'staging' or 'pro'. Integration is skipped when 'pro'."
         type: string
         required: true
 
@@ -212,8 +212,9 @@ jobs:
 
   # --------------------------------------------------------------------------
   # 4) integration: colocated end-to-end tests against the just-deployed
-  #    CloudFront distribution. Dev only. Non-blocking (continue-on-error)
-  #    so a failure never rolls back the deploy that already succeeded.
+  #    CloudFront distribution. dev + staging, never pro. Non-blocking
+  #    (continue-on-error) so a failure never rolls back the deploy that
+  #    already succeeded.
   #
   #    Optional today: the detect step looks for `projects/<block>/e2e/`
   #    (Playwright convention) OR `projects/<block>/cypress/`. If neither
@@ -227,12 +228,12 @@ jobs:
   integration:
     name: Integration
     needs: [validate, test, deploy]
-    if: inputs.stage == 'dev' && needs.deploy.result == 'success'
+    if: inputs.stage != 'pro' && needs.deploy.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
     environment:
-      name: dev
+      name: ${{ inputs.stage }}
     outputs:
       pytest_outcome: ${{ steps.run.outcome }}
       files_present: ${{ steps.detect.outputs.count }}
