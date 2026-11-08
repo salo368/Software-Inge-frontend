@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import {
     test,
     expect,
@@ -11,44 +8,22 @@ import {
     readFixtureBase64,
 } from '../../support/signing/signing-e2e';
 
-test.setTimeout(180_000);
+import {
+    requireSigningE2EInputs,
+} from '../../support/signing/signing-test-env';
+
+test.setTimeout(300_000);
 
 test(
     'EUV-UC3-007 · registrar la firma manuscrita del inversionista',
     async ({ page }, testInfo) => {
-        testInfo.annotations.push({
-            type: 'known_issue',
-            description:
-                'DEF-UC3-SIGN-001',
-        });
-
-        testInfo.annotations.push({
-            type: 'workaround',
-            description:
-                'Reload en etapa Signature antes de iniciar la ceremonia.',
-        });
-
-        const facePath =
-            process.env
-                .SIGNATURES_TEST_FACE_PATH;
-
-        if (
-            !facePath ||
-            !fs.existsSync(
-                path.resolve(facePath)
-            )
-        ) {
-            testInfo.annotations.push({
-                type: 'blocked',
-                description:
-                    'SIGNATURES_TEST_FACE_PATH no está configurado o no existe.',
-            });
-
-            test.skip(
-                true,
-                'Se necesita una fixture facial local para preparar la ceremonia.'
+        const {
+            facePath,
+            signerEmail,
+        } =
+            requireSigningE2EInputs(
+                testInfo
             );
-        }
 
         const preparation =
             await test.step(
@@ -56,7 +31,8 @@ test(
                 async () => {
                     return await prepareSigningAtSignatureScreen(
                         page,
-                        facePath!
+                        facePath,
+                        signerEmail
                     );
                 }
             );
@@ -77,33 +53,16 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.signId
-                ).toBe(
-                    context.signId
-                );
-
-                expect(
-                    state.screen
-                ).toBe(
-                    'signature'
-                );
-
-                expect(
-                    state.uploads?.id_front.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads?.id_back.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads?.face.validated
-                ).toBe(true);
-
-                expect(
-                    state.error
-                ).toBe('');
+                expect(state.signatureId).toBe(context.signatureId);
+                expect(state.screen).toBe('signature');
+                expect(state.stage).toBe('SIGNATURE');
+                expect(state.biometrics).toEqual({
+                    ID_FRONT: true,
+                    ID_BACK: true,
+                    FACE: true,
+                });
+                expect(state.drawSubmitted).toBe(false);
+                expect(state.error).toBe('');
             }
         );
 
@@ -118,41 +77,25 @@ test(
         );
 
         await test.step(
-            'ENTONCES la firma queda registrada y la ceremonia avanza a consentimiento',
+            'ENTONCES la firma queda registrada y la ceremonia avanza a confirmación por código',
             async () => {
                 await driver.waitForScreen(
-                    'consent',
+                    'otp',
                     30_000
                 );
 
                 const state =
                     await driver.state();
 
-                expect(
-                    state.signId
-                ).toBe(
-                    context.signId
-                );
+                expect(state.signatureId).toBe(context.signatureId);
+                expect(state.drawSubmitted).toBe(true);
+                expect(state.screen).toBe('otp');
+                expect(state.stage).toBe('OTP');
+                expect(state.error).toBe('');
 
-                expect(
-                    state.uploads?.signature.uploaded
-                ).toBe(true);
-
-                expect(
-                    state.screen
-                ).toBe(
-                    'consent'
-                );
-
-                expect(
-                    state.stage
-                ).toBe(
-                    'consent'
-                );
-
-                expect(
-                    state.error
-                ).toBe('');
+                await expect(
+                    page.locator('#signing-screen-otp')
+                ).toBeVisible();
             }
         );
 
@@ -175,8 +118,8 @@ test(
                             processId:
                                 context.processId,
 
-                            signId:
-                                context.signId,
+                            signatureId:
+                                context.signatureId,
 
                             resultingScreen:
                                 finalState.screen,
@@ -184,12 +127,8 @@ test(
                             resultingStage:
                                 finalState.stage,
 
-                            signature:
-                                finalState.uploads
-                                    ?.signature,
-
-                            knownIssue:
-                                'DEF-UC3-SIGN-001',
+                            drawSubmitted:
+                                finalState.drawSubmitted,
 
                             finalUrl:
                                 page.url(),

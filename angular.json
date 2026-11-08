@@ -200,7 +200,11 @@
               "node_modules/bootstrap-icons/font/bootstrap-icons.css",
               "projects/portal/src/styles.css"
             ],
-            "scripts": []
+            "scripts": [],
+            "include": [
+              "**/*.spec.ts",
+              "../../shared/src/**/*.spec.ts"
+            ]
           }
         }
       }
@@ -298,6 +302,26 @@
             }
           },
           "defaultConfiguration": "dev"
+        },
+        "test": {
+          "builder": "@angular-devkit/build-angular:karma",
+          "options": {
+            "polyfills": [
+              "zone.js",
+              "zone.js/testing"
+            ],
+            "tsConfig": "tsconfig.spec.json",
+            "assets": [],
+            "styles": [
+              "node_modules/bootstrap/dist/css/bootstrap.min.css",
+              "node_modules/bootstrap-icons/font/bootstrap-icons.css",
+              "projects/signing/src/styles.css"
+            ],
+            "scripts": [],
+            "include": [
+              "**/*.spec.ts"
+            ]
+          }
         }
       }
     }

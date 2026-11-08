@@ -56,7 +56,12 @@ Thumbs.db
 /parex/.auth/
 /parex/.env.dev.local
 /parex/.env.pro.local
+/parex/.env.staging.local
 /parex/playwright-report/
 /parex/test-results/
 
 /.auth/
+
+# Credenciales locales (AWS IAM access keys). Nunca se suben.
+access.csv
+*accessKeys*.csv

@@ -1,33 +1,22 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { Observable, from, switchMap } from 'rxjs';
+import { Observable, map, switchMap } from 'rxjs';
 
 import { environment } from '../environments/environment';
+import { RequiredFileType } from './processes.service';
+import { putToPresignedUrl } from './s3-upload';
 
-export type FileType = 'declaracion_renta';
+/** Every user-uploadable `FileType` (backend libs/orm/files.py). */
+export type UploadFileType = RequiredFileType | 'INVESTMENT_ORDER';
 
-export interface FileRow {
-  id: string;
-  file_type: FileType | string;
-  s3_key: string;
-  original_name: string | null;
-  size_bytes: number | null;
-  content_type: string | null;
-  uploaded_at: string;
-}
+export const ALLOWED_FILE_CONTENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png'] as const;
 
-interface UploadUrlResponse {
+export interface UploadUrlResponse {
   upload_url: string;
   key: string;
   content_type: string;
+  /** Must all go, verbatim, on the PUT: they are signed into the URL. */
   upload_headers: Record<string, string>;
-  expires_in: number;
-}
-
-interface DownloadUrlResponse {
-  download_url: string;
-  content_type: string | null;
-  original_name: string | null;
   expires_in: number;
 }
 
@@ -37,36 +26,24 @@ export class FilesService {
   private base = environment.filesApiUrl;
 
   /**
-   * Requests a presigned PUT URL and uploads the browser File to S3 directly.
-   * Registration in DB happens asynchronously via the S3 trigger; poll
-   * GET /processes/{id} to see the file appear in `files`.
+   * Presigned PUT straight to S3. The file is registered asynchronously by
+   * the `on_upload` S3 trigger from the object metadata, so callers poll
+   * `ProcessesService.requiredFiles()` to see it land.
    */
-  upload(processId: string, fileType: FileType, file: File): Observable<UploadUrlResponse> {
-    const req$ = this.http.post<UploadUrlResponse>(`${this.base}/files/upload-url`, {
-      process_id: processId,
-      file_type: fileType,
-      content_type: file.type || 'application/pdf',
-      original_name: file.name,
-    });
-
-    return req$.pipe(
-      switchMap((r) =>
-        from(
-          fetch(r.upload_url, {
-            method: 'PUT',
-            // Signed into the presigned URL, so they must go through as-is.
-            headers: r.upload_headers ?? { 'Content-Type': r.content_type },
-            body: file,
-          }).then((resp) => {
-            if (!resp.ok) throw new Error(`S3 upload failed: ${resp.status}`);
-            return r;
-          }),
+  upload(processId: string, fileType: UploadFileType, file: File): Observable<UploadUrlResponse> {
+    return this.http
+      .post<UploadUrlResponse>(`${this.base}/files/upload-url`, {
+        process_id: processId,
+        file_type: fileType,
+        content_type: file.type || 'application/pdf',
+        original_name: file.name,
+      })
+      .pipe(
+        switchMap((r) =>
+          putToPresignedUrl(r.upload_url, file, r.upload_headers ?? { 'Content-Type': r.content_type }).pipe(
+            map(() => r),
+          ),
         ),
-      ),
-    );
-  }
-
-  downloadUrl(fileId: string): Observable<DownloadUrlResponse> {
-    return this.http.get<DownloadUrlResponse>(`${this.base}/files/${fileId}/download-url`);
+      );
   }
 }

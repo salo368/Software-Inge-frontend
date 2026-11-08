@@ -4,23 +4,30 @@ import {
 } from '@playwright/test';
 
 import {
+    payFullAmount,
     prepareProcessAtPaymentStage,
 } from '../../support/uc3/completion-flow';
 
 import {
-    requireSigningE2EInputs,
+    requireSigningE2EInputsWithOtp,
 } from '../../support/signing/signing-test-env';
 
 test.setTimeout(300_000);
 
+/*
+ * Bloqueado (test.fixme) mientras no exista una fuente automatizable del
+ * OTP: ver OTP_BLOCKED_REASON en support/signing/signing-test-env.ts.
+ *
+ * Cambio de contrato: el pago ya no es simulado con un botón. El
+ * inversionista registra cada transferencia con su comprobante
+ * (`payments`), y `processes.get-pending-pay` pasa el proceso a REVIEW
+ * cuando lo pagado cubre el monto.
+ */
 test(
-    'EUV-UC3-012 · completar el pago simulado y activar el CDT',
+    'EUV-UC3-012 · registrar el pago del CDT y enviarlo a revisión',
     async ({ page }, testInfo) => {
-        const {
-            facePath,
-            debugOtpKeyHex,
-        } =
-            requireSigningE2EInputs(
+        const inputs =
+            requireSigningE2EInputsWithOtp(
                 testInfo
             );
 
@@ -32,25 +39,23 @@ test(
                 async () => {
                     return await prepareProcessAtPaymentStage(
                         page,
-                        facePath,
-                        debugOtpKeyHex
+                        inputs
                     );
                 }
             );
 
         await test.step(
-            'CUANDO el inversionista completa el pago simulado',
+            'CUANDO el inversionista registra una transferencia por el total con su comprobante',
             async () => {
-                await page
-                    .locator(
-                        '#process-advance-payment'
-                    )
-                    .click();
+                await payFullAmount(
+                    page,
+                    context.amount
+                );
             }
         );
 
         await test.step(
-            'ENTONCES el proceso queda completado y el CDT aparece activo',
+            'ENTONCES el pago queda registrado y el proceso pasa a revisión',
             async () => {
                 await expect(
                     page.locator(
@@ -65,8 +70,17 @@ test(
                     page.locator(
                         '#process-stage-done'
                     )
+                ).toHaveAttribute(
+                    'data-stage',
+                    'REVIEW'
+                );
+
+                await expect(
+                    page.locator(
+                        '#process-stage-done'
+                    )
                 ).toContainText(
-                    'Tu CDT esta activo'
+                    'Recibimos tu pago'
                 );
 
                 await expect(

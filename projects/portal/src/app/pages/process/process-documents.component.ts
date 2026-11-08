@@ -3,291 +3,205 @@ import {
   Component,
   EventEmitter,
   Input,
-  OnChanges,
   OnDestroy,
+  OnInit,
   Output,
+  computed,
   inject,
   signal,
 } from '@angular/core';
 
-import { DocumentStatusRow, DocumentsService, ReuseCandidate } from '@shared/core/documents.service';
-import { FileRow, FilesService } from '@shared/core/files.service';
+import { ALLOWED_FILE_CONTENT_TYPES, FilesService } from '@shared/core/files.service';
+import { ProcessesService, RequiredFileType, RequiredFiles } from '@shared/core/processes.service';
 
 const POLL_MS = 2000;
-const MAX_POLL = 15;
+const MAX_POLL = 20;
+const MAX_BYTES = 10 * 1024 * 1024;
 
+interface DocDef {
+  type: RequiredFileType;
+  /** DOM id fragment (`process-documents-*-<slug>`). */
+  slug: string;
+  label: string;
+  hint: string;
+  icon: string;
+}
+
+/** Display order. Which ones apply comes from the backend. */
+const DOCS: DocDef[] = [
+  {
+    type: 'BANK_CERT',
+    slug: 'bank-cert',
+    label: 'Certificacion bancaria',
+    hint: 'De la cuenta desde la que vas a transferir. Expedida hace menos de 30 dias.',
+    icon: 'bi-bank',
+  },
+  {
+    type: 'TAX_DECLARATION',
+    slug: 'tax-declaration',
+    label: 'Declaracion de renta',
+    hint: 'Ultimo periodo disponible. Te la pedimos porque eres declarante.',
+    icon: 'bi-file-earmark-text',
+  },
+  {
+    type: 'RUT',
+    slug: 'rut',
+    label: 'RUT',
+    hint: 'Registro Unico Tributario actualizado. Te lo pedimos por ser PEP.',
+    icon: 'bi-file-earmark-person',
+  },
+];
+
+export interface DocRow extends DocDef {
+  uploaded: boolean;
+  uploading: boolean;
+  /** Original file name of the last upload done in this session. */
+  fileName: string | null;
+  error: string | null;
+}
+
+/**
+ * Upload of the documents the process requires (`BANK_CERT` always,
+ * `TAX_DECLARATION` for tax declarants, `RUT` for PEPs). The file goes
+ * straight to S3; the backend registers it asynchronously, so after each
+ * upload we poll `get-required-files` until that type flips to `true`.
+ *
+ * Emits `completeChange` with whether every required document is in.
+ */
 @Component({
   selector: 'app-process-documents',
   standalone: true,
   imports: [CommonModule],
   templateUrl: './process-documents.component.html',
 })
-export class ProcessDocumentsComponent implements OnChanges, OnDestroy {
+export class ProcessDocumentsComponent implements OnInit, OnDestroy {
   @Input({ required: true }) processId!: string;
-  @Input() files: FileRow[] = [];
-  @Output() uploaded = new EventEmitter<void>();
+  @Output() completeChange = new EventEmitter<boolean>();
 
-  private api = inject(FilesService);
+  private filesApi = inject(FilesService);
+  private processesApi = inject(ProcessesService);
   private pollTimer: number | null = null;
   private attempts = 0;
 
-  uploading = signal(false);
-  progressMsg = signal('');
-  error = signal<string | null>(null);
+  readonly ACCEPT = ALLOWED_FILE_CONTENT_TYPES.join(',');
 
-  get declaracion(): FileRow | undefined {
-    return this.files.find((f) => f.file_type === 'declaracion_renta');
-  }
+  loading = signal(true);
+  loadError = signal<string | null>(null);
+  rows = signal<DocRow[]>([]);
 
-  // --------------------------------------------------------------------
-  // C11 -- Capturar y validar documentación de soporte (cédula, frente).
-  // Backend y bucket propios (`documents`), separados de `files` -- por
-  // eso este bloque mantiene su propio polling, independiente del de
-  // `declaracion_renta` de arriba. Ver C11_Arquitectura_Mecanismos_y_
-  // Patrones.md §5 para el flujo completo.
-  // --------------------------------------------------------------------
-  private documentsApi = inject(DocumentsService);
-  private pollTimerId: number | null = null;
-  private attemptsId = 0;
+  readonly complete = computed(() => {
+    const r = this.rows();
+    return r.length > 0 && r.every((d) => d.uploaded);
+  });
+  readonly anyUploading = computed(() => this.rows().some((d) => d.uploading));
 
-  uploadingId = signal(false);
-  progressMsgId = signal('');
-  errorId = signal<string | null>(null);
-  idFrontEstado = signal<DocumentStatusRow | null>(null);
-
-  // FA1 (reutilización de vigentes): si el inversionista ya tiene, de un
-  // proceso anterior, un id_front validado y todavía vigente, se ofrece
-  // reutilizarlo en vez de forzar una carga nueva. `reuseChecked` evita
-  // repetir la consulta en cada ngOnChanges -- solo importa la primera vez
-  // que processId está disponible.
-  reuseCandidate = signal<ReuseCandidate | null>(null);
-  reusingId = signal(false);
-  private reuseChecked = false;
-
-  // The parent refreshes asynchronously after each `uploaded` emit, so the
-  // registered row shows up here as a new `files` array rather than inline.
-  ngOnChanges(): void {
-    if (this.uploading() && this.declaracion) this.stopPolling('');
-    if (this.processId && !this.reuseChecked) {
-      this.reuseChecked = true;
-      this.loadInitialIdFrontState();
-    }
-  }
-
-  /**
-   * Corrección encontrada en revisión antes del PR: el componente nunca
-   * consultaba el estado de id_front al cargar, solo durante el polling
-   * posterior a una subida. Eso dejaba dos problemas: si el inversionista
-   * ya tenía su cédula validada en ESTE proceso (por ejemplo, volvió a
-   * esta página en otra sesión), la caja de carga aparecía vacía en vez de
-   * mostrar el documento ya validado; y la oferta de reutilización de FA1
-   * podía terminar ofreciendo "reutilizar" el mismo documento que ya está
-   * en este proceso, porque get_vigente no excluye el proceso actual.
-   * Consultar el estado primero, y solo ofrecer reutilización cuando
-   * todavía no hay un id_front validado aquí, resuelve los dos a la vez.
-   */
-  private loadInitialIdFrontState(): void {
-    this.documentsApi.status(this.processId).subscribe({
-      next: (r) => {
-        const doc = r.documentos.find((d) => d.document_type === 'id_front') ?? null;
-        this.idFrontEstado.set(doc);
-        if (doc?.stage === 'rechazado') this.errorId.set(this.mensajeRechazoId(doc.rejection_reason));
-        if (!doc || doc.stage !== 'validado') this.checkIdFrontReuse();
-      },
-      error: () => this.checkIdFrontReuse(),
-    });
+  ngOnInit(): void {
+    this.refresh(true);
   }
 
   ngOnDestroy(): void {
     this.clearTimer();
-    this.clearTimerId();
   }
 
-  onFileChange(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    this.uploadFile(file);
-    input.value = '';
-  }
-
-  uploadFile(file: File): void {
-    if (this.uploading()) return;
-    this.uploading.set(true);
-    this.error.set(null);
-    this.progressMsg.set('Subiendo...');
-    this.api.upload(this.processId, 'declaracion_renta', file).subscribe({
-      next: () => {
-        this.progressMsg.set('Registrando el documento...');
-        this.startPolling();
+  /** Re-reads the requirement map (public so the parent can call it after a form edit). */
+  refresh(initial = false): void {
+    this.processesApi.requiredFiles(this.processId).subscribe({
+      next: (status) => {
+        this.apply(status);
+        if (initial) this.loading.set(false);
       },
       error: () => {
-        this.uploading.set(false);
-        this.progressMsg.set('');
-        this.error.set('No pudimos subir el archivo. Verifica el formato e intenta de nuevo.');
+        if (initial) {
+          this.loading.set(false);
+          this.loadError.set('No pudimos consultar tus documentos. Recarga la pagina.');
+        }
       },
     });
   }
 
+  private apply(status: RequiredFiles): void {
+    const prev = new Map(this.rows().map((r) => [r.type, r]));
+    const next: DocRow[] = DOCS.filter((d) => d.type in status).map((d) => {
+      const p = prev.get(d.type);
+      const uploaded = status[d.type] === true;
+      return {
+        ...d,
+        uploaded,
+        uploading: uploaded ? false : (p?.uploading ?? false),
+        fileName: p?.fileName ?? null,
+        error: uploaded ? null : (p?.error ?? null),
+      };
+    });
+    const wasComplete = this.complete();
+    this.rows.set(next);
+    if (!this.anyUploading()) this.clearTimer();
+    if (this.complete() !== wasComplete) this.completeChange.emit(this.complete());
+  }
+
+  onFileChange(row: DocRow, event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    this.upload(row.type, file);
+  }
+
+  upload(type: RequiredFileType, file: File): void {
+    const row = this.rows().find((r) => r.type === type);
+    if (!row || row.uploading) return;
+
+    if (file.type && !(ALLOWED_FILE_CONTENT_TYPES as readonly string[]).includes(file.type)) {
+      this.patch(type, { error: 'Formato no admitido. Sube un PDF, JPG o PNG.' });
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      this.patch(type, { error: 'El archivo supera 10 MB.' });
+      return;
+    }
+
+    this.patch(type, { uploading: true, error: null, fileName: file.name });
+    this.filesApi.upload(this.processId, type, file).subscribe({
+      next: () => this.startPolling(),
+      error: () =>
+        this.patch(type, {
+          uploading: false,
+          error: 'No pudimos subir el archivo. Verifica el formato e intenta de nuevo.',
+        }),
+    });
+  }
+
+  private patch(type: RequiredFileType, changes: Partial<DocRow>): void {
+    this.rows.update((rows) => rows.map((r) => (r.type === type ? { ...r, ...changes } : r)));
+  }
+
   private startPolling(): void {
     this.attempts = 0;
-    this.clearTimer();
-    this.uploaded.emit();
+    if (this.pollTimer !== null) return;
     this.pollTimer = window.setInterval(() => {
       this.attempts += 1;
-      if (this.attempts >= MAX_POLL) {
-        this.stopPolling(
-          'El archivo se subio pero tarda en registrarse. Recarga la pagina en unos segundos.',
+      if (this.attempts > MAX_POLL) {
+        this.clearTimer();
+        this.rows.update((rows) =>
+          rows.map((r) =>
+            r.uploading
+              ? {
+                  ...r,
+                  uploading: false,
+                  error: 'El archivo se subio pero tarda en registrarse. Recarga la pagina en unos segundos.',
+                }
+              : r,
+          ),
         );
         return;
       }
-      this.uploaded.emit();
+      this.refresh();
     }, POLL_MS);
-  }
-
-  private stopPolling(errorMsg: string): void {
-    this.clearTimer();
-    this.uploading.set(false);
-    this.progressMsg.set('');
-    if (errorMsg) this.error.set(errorMsg);
   }
 
   private clearTimer(): void {
     if (this.pollTimer !== null) {
       window.clearInterval(this.pollTimer);
       this.pollTimer = null;
-    }
-  }
-
-  openFile(): void {
-    const f = this.declaracion;
-    if (!f) return;
-    this.api.downloadUrl(f.id).subscribe({
-      next: (r) => window.open(r.download_url, '_blank'),
-    });
-  }
-
-  // --------------------------------------------------------------------
-  // C11 -- cédula (frente). Mismo patrón de carga + polling que arriba,
-  // pero consultando el estado de VALIDACIÓN (no solo "¿se subió?") --
-  // por eso usa su propio DocumentsService.status(), no FilesService.
-  // --------------------------------------------------------------------
-  onIdFrontFileChange(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    this.uploadIdFront(file);
-    input.value = '';
-  }
-
-  uploadIdFront(file: File): void {
-    if (this.uploadingId()) return;
-    this.reuseCandidate.set(null);
-    this.uploadingId.set(true);
-    this.errorId.set(null);
-    this.progressMsgId.set('Subiendo...');
-    this.documentsApi.upload(this.processId, 'id_front', file).subscribe({
-      next: () => {
-        this.progressMsgId.set('Validando el documento...');
-        this.startPollingId();
-      },
-      error: () => {
-        this.uploadingId.set(false);
-        this.progressMsgId.set('');
-        this.errorId.set('No pudimos subir el archivo. Verifica el formato e intenta de nuevo.');
-      },
-    });
-  }
-
-  private startPollingId(): void {
-    this.attemptsId = 0;
-    this.clearTimerId();
-    this.refreshIdStatus();
-    this.pollTimerId = window.setInterval(() => {
-      this.attemptsId += 1;
-      if (this.attemptsId >= MAX_POLL) {
-        this.clearTimerId();
-        this.uploadingId.set(false);
-        this.progressMsgId.set('');
-        this.errorId.set('La validación está tardando. Recarga la página en unos segundos.');
-        return;
-      }
-      this.refreshIdStatus();
-    }, POLL_MS);
-  }
-
-  private refreshIdStatus(): void {
-    this.documentsApi.status(this.processId).subscribe({
-      next: (r) => {
-        const doc = r.documentos.find((d) => d.document_type === 'id_front') ?? null;
-        this.idFrontEstado.set(doc);
-        if (doc && (doc.stage === 'validado' || doc.stage === 'rechazado')) {
-          this.clearTimerId();
-          this.uploadingId.set(false);
-          this.progressMsgId.set('');
-          if (doc.stage === 'rechazado') {
-            this.errorId.set(this.mensajeRechazoId(doc.rejection_reason));
-          }
-        }
-      },
-      // Un fallo de red puntual durante el polling no debe matar el
-      // ciclo -- se reintenta en el próximo tick hasta MAX_POLL.
-      error: () => undefined,
-    });
-  }
-
-  private mensajeRechazoId(reason: string | null): string {
-    if (reason === 'documento_ilegible') {
-      return 'No pudimos leer la imagen. Intenta con mejor luz o enfoque.';
-    }
-    if (reason === 'no_corresponde') {
-      return 'El documento no corresponde con tus datos registrados.';
-    }
-    if (reason === 'formato_no_admitido') {
-      return 'El archivo no es una imagen válida (JPEG o PNG). Verifica el formato e intenta de nuevo.';
-    }
-    return 'El documento fue rechazado. Intenta de nuevo.';
-  }
-
-  // --------------------------------------------------------------------
-  // FA1 -- reutilización de un id_front vigente de un proceso anterior.
-  // --------------------------------------------------------------------
-  private checkIdFrontReuse(): void {
-    this.documentsApi.checkReuse(this.processId, 'id_front').subscribe({
-      next: (r) => this.reuseCandidate.set(r.reutilizable ? r.documento ?? null : null),
-      // Si la consulta falla, se degrada en silencio al flujo normal de
-      // carga -- no es un error que deba bloquear ni mostrarse.
-      error: () => this.reuseCandidate.set(null),
-    });
-  }
-
-  confirmIdFrontReuse(): void {
-    const candidato = this.reuseCandidate();
-    if (!candidato || this.reusingId()) return;
-    this.reusingId.set(true);
-    this.errorId.set(null);
-    this.documentsApi.confirmReuse(this.processId, 'id_front', candidato.id).subscribe({
-      next: (doc) => {
-        this.reusingId.set(false);
-        this.reuseCandidate.set(null);
-        this.idFrontEstado.set(doc);
-      },
-      error: () => {
-        this.reusingId.set(false);
-        this.errorId.set('No pudimos reutilizar el documento anterior. Carga uno nuevo.');
-        this.reuseCandidate.set(null);
-      },
-    });
-  }
-
-  declineIdFrontReuse(): void {
-    this.reuseCandidate.set(null);
-  }
-
-  private clearTimerId(): void {
-    if (this.pollTimerId !== null) {
-      window.clearInterval(this.pollTimerId);
-      this.pollTimerId = null;
     }
   }
 }

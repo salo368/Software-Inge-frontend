@@ -72,17 +72,30 @@ npm run parex:e2e:report
 
 Variables de entorno esperadas (ver `deploy-dev.yml`, job `parex`, para la
 lista completa tal como la usa CI): `TEST_USER_EMAIL`, `TEST_USER_PASSWORD`,
-`DEBUG_OTP_KEY_HEX` (para leer el OTP en texto plano durante la ceremonia de
-firma — mismo mecanismo que `e2e/`, ver su README para el detalle de cómo se
-deriva esa llave), y opcionalmente `SIGNATURES_TEST_FACE_PATH` para la
-validación biométrica. Localmente se pueden definir en
-`parex/.env.{dev,pro}.local` (no se commitean).
+opcionalmente `SIGNATURES_TEST_FACE_PATH` para la validación biométrica y
+`SIGNATURES_TEST_EMAIL` para el correo del firmante (por defecto
+`TEST_USER_EMAIL`). Localmente se pueden definir en
+`parex/.env.{dev,staging,pro}.local` (no se commitean).
 
-## Qué falta (cobertura conocida, no un defecto de la suite)
+## Flujo que valida UC3 (contrato actual del backend)
 
-Ningún spec de PAREX ejercita todavía C11 (captura y validación de
-documentación de soporte vía el servicio `documents`): el spec más cercano,
-`EUV-UC3-003`, opera sobre el flujo anterior de `declaracion_renta` vía
-`FilesService`, con selectores distintos a los de `documents` (`#process-
-documents-id-front-*`, ya estables desde el primer commit de C11). Agregar
-ese caso es trabajo pendiente, no un hueco silencioso del pipeline.
+| EUV | Qué valida | Estado |
+|---|---|---|
+| 001 | Abrir un CDT desde el simulador (`GET /banks/simulate` -> `create-process`) | activo |
+| 002 | Formulario KYC (`upsert-form` + `set-process-form`) -> `DOCUMENTS` | activo |
+| 003 | Documentos requeridos (`BANK_CERT` + `TAX_DECLARATION`, porque el formulario sintético declara renta) | activo |
+| 004 | `DOCUMENTS` -> `SIGNATURE` (generate_sign abre la firma) | activo |
+| 005 | Iniciar la firma: navegación a `/sign/{signature_id}?return_url=...` | activo |
+| 006 | Correo + términos, y validación de identidad (frente, reverso, rostro) | activo (requiere fixture facial) |
+| 007 | Firma manuscrita -> `OTP` | activo (requiere fixture facial) |
+| 008 | Solicitar el código OTP | activo (requiere fixture facial) |
+| 009-013 | Confirmar OTP, firmado, regreso al portal, pago, Mi cuenta | `fixme` |
+
+**Por qué 009-013 están en `fixme`:** el backend ya no expone el OTP de
+prueba (`X-Debug-OTP-Signature` / `_debug_otp` se eliminaron; `set-otp` solo
+envía el código por correo). Sin una fuente automatizable del código no hay
+forma de confirmarlo. Para reactivarlos basta con implementar
+`resolveOtpProvider()` en `tests/support/signing/signing-test-env.ts` (un
+buzón de prueba leído por IMAP/API, o un endpoint de prueba en dev/staging):
+los specs ya están escritos contra el flujo nuevo, incluido el pago con
+comprobante (`payments`) y el estado final `REVIEW`.

@@ -1,61 +1,50 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import {
     test,
     expect,
 } from '@playwright/test';
 
 import {
-    prepareSigningAtConsentScreen,
+    prepareSigningAtOtpScreen,
 } from '../../support/signing/signing-e2e';
 
-test.setTimeout(180_000);
+import {
+    requireSigningE2EInputs,
+} from '../../support/signing/signing-test-env';
 
+test.setTimeout(300_000);
+
+/*
+ * Cambio de contrato respecto a la versión anterior de este EUV:
+ *
+ * El backend ya no tiene una etapa de consentimiento (`consent`). Los
+ * términos se aceptan junto con el correo del firmante, al inicio de la
+ * ceremonia (ver la preparación de UC3-006), y el primer OTP se pide
+ * apenas se registra la firma manuscrita (UC3-007).
+ *
+ * Por eso UC3-008 valida aquí la solicitud explícita del código por parte
+ * del inversionista (botón "Reenviar código"), que es el estímulo de OTP
+ * que sigue existiendo. No necesita conocer el código: solo que el
+ * sistema lo emita y deje la ceremonia lista para confirmarlo.
+ */
 test(
     'EUV-UC3-008 · aceptar términos y solicitar código OTP',
     async ({ page }, testInfo) => {
-        testInfo.annotations.push({
-            type: 'known_issue',
-            description:
-                'DEF-UC3-SIGN-001',
-        });
-
-        testInfo.annotations.push({
-            type: 'workaround',
-            description:
-                'Reload en etapa Signature antes de iniciar la ceremonia.',
-        });
-
-        const facePath =
-            process.env
-                .SIGNATURES_TEST_FACE_PATH;
-
-        if (
-            !facePath ||
-            !fs.existsSync(
-                path.resolve(facePath)
-            )
-        ) {
-            testInfo.annotations.push({
-                type: 'blocked',
-                description:
-                    'SIGNATURES_TEST_FACE_PATH no está configurado o no existe.',
-            });
-
-            test.skip(
-                true,
-                'Se necesita una fixture facial local para preparar la ceremonia.'
+        const {
+            facePath,
+            signerEmail,
+        } =
+            requireSigningE2EInputs(
+                testInfo
             );
-        }
 
         const preparation =
             await test.step(
-                'PREPARACIÓN · existe una ceremonia en etapa de consentimiento',
+                'PREPARACIÓN · existe una ceremonia con términos aceptados, identidad validada y firma manuscrita registrada',
                 async () => {
-                    return await prepareSigningAtConsentScreen(
+                    return await prepareSigningAtOtpScreen(
                         page,
-                        facePath!
+                        facePath,
+                        signerEmail
                     );
                 }
             );
@@ -66,64 +55,62 @@ test(
         } = preparation;
 
         await test.step(
-            'DADO una ceremonia con identidad validada y firma manuscrita registrada',
+            'DADO una ceremonia en confirmación por código',
             async () => {
                 const state =
                     await driver.state();
 
-                expect(
-                    state.signId
-                ).toBe(
-                    context.signId
-                );
+                expect(state.signatureId).toBe(context.signatureId);
+                expect(state.screen).toBe('otp');
+                expect(state.stage).toBe('OTP');
+                expect(state.drawSubmitted).toBe(true);
+                expect(state.error).toBe('');
 
-                expect(
-                    state.screen
-                ).toBe(
-                    'consent'
-                );
-
-                expect(
-                    state.stage
-                ).toBe(
-                    'consent'
-                );
-
-                expect(
-                    state.uploads?.id_front.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads?.id_back.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads?.face.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads?.signature.uploaded
-                ).toBe(true);
-
-                expect(
-                    state.otpSent
-                ).toBe(false);
-
-                expect(
-                    state.error
-                ).toBe('');
+                await expect(
+                    page.locator('#signing-otp-resend')
+                ).toBeEnabled();
             }
         );
 
         await test.step(
-            'CUANDO el inversionista acepta los términos de la ceremonia',
+            'CUANDO el inversionista solicita el código OTP',
             async () => {
-                await driver.acceptConsent();
+                const otpResponse =
+                    page.waitForResponse(
+                        (response) =>
+                            response.request().method() === 'POST' &&
+                            response.url().includes('/signatures/set-otp'),
+                        {
+                            timeout: 30_000,
+                        }
+                    );
+
+                await page
+                    .locator('#signing-otp-resend')
+                    .click();
+
+                const response =
+                    await otpResponse;
+
+                expect(
+                    response.ok(),
+                    `set-otp debe responder 200; status=${response.status()}`
+                ).toBeTruthy();
+
+                const body =
+                    await response.json();
+
+                expect(
+                    body.email_sent,
+                    'el servidor de correo debe aceptar el envío del OTP'
+                ).toBe(true);
+
+                expect(body.stage).toBe('OTP');
             }
         );
 
         await test.step(
-            'ENTONCES el sistema solicita el código OTP y presenta la etapa de confirmación',
+            'ENTONCES el sistema emite el código y presenta la etapa de confirmación',
             async () => {
                 await driver.waitForOtpRequested(
                     30_000
@@ -132,31 +119,20 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.signId
-                ).toBe(
-                    context.signId
-                );
+                expect(state.signatureId).toBe(context.signatureId);
+                expect(state.screen).toBe('otp');
+                expect(state.stage).toBe('OTP');
+                expect(state.otpSent).toBe(true);
+                expect(state.attemptsLeft).toBe(3);
+                expect(state.error).toBe('');
 
-                expect(
-                    state.screen
-                ).toBe(
-                    'otp'
-                );
+                await expect(
+                    page.locator('#signing-otp-input')
+                ).toBeVisible();
 
-                expect(
-                    state.stage
-                ).toBe(
-                    'otp'
-                );
-
-                expect(
-                    state.otpSent
-                ).toBe(true);
-
-                expect(
-                    state.error
-                ).toBe('');
+                await expect(
+                    page.locator('#signing-otp-attempts')
+                ).toContainText('3');
             }
         );
 
@@ -164,7 +140,7 @@ test(
             await driver.state();
 
         await testInfo.attach(
-            'estado-consentimiento-otp',
+            'estado-otp',
             {
                 body: Buffer.from(
                     JSON.stringify(
@@ -179,8 +155,8 @@ test(
                             processId:
                                 context.processId,
 
-                            signId:
-                                context.signId,
+                            signatureId:
+                                context.signatureId,
 
                             resultingScreen:
                                 finalState.screen,
@@ -191,13 +167,8 @@ test(
                             otpSent:
                                 finalState.otpSent,
 
-                            debugOtpAvailable:
-                                Boolean(
-                                    finalState.debugOtp
-                                ),
-
-                            knownIssue:
-                                'DEF-UC3-SIGN-001',
+                            attemptsLeft:
+                                finalState.attemptsLeft,
 
                             finalUrl:
                                 page.url(),

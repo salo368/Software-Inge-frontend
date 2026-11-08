@@ -100,8 +100,15 @@ test(
                         '#process-stage-documents'
                     )
                 ).toBeVisible({
-                    timeout: 15_000,
+                    timeout: 30_000,
                 });
+
+                await expect(
+                    page.locator('#process-header')
+                ).toHaveAttribute(
+                    'data-stage',
+                    'DOCUMENTS'
+                );
 
                 /*
                  * Formulario ya no debe estar disponible.
@@ -163,7 +170,7 @@ test(
                                 documentNumber,
 
                             resultingStage:
-                                'documents',
+                                'DOCUMENTS',
 
                             finalUrl:
                                 page.url(),

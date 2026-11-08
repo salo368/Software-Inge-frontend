@@ -4,12 +4,15 @@ import {
 } from '@playwright/test';
 
 import {
-    buildSyntheticDeclaration,
+    buildSyntheticDocument,
     completeProcessForm,
     createProcessAtFormStage,
+    readRequiredDocuments,
+    type RequiredDocument,
+    type SyntheticDocument,
 } from '../../support/uc3/process-flow';
 
-test.setTimeout(120_000);
+test.setTimeout(180_000);
 
 test(
     'EUV-UC3-003 · registrar la documentación requerida de una adquisición',
@@ -21,8 +24,12 @@ test(
          *
          * Dejamos el proceso exactamente en Documentos.
          *
-         * NO cargamos todavía ninguna declaración porque ese upload
+         * NO cargamos todavía ningún documento porque ese upload
          * pertenece al comportamiento que pretende demostrar UC3-003.
+         *
+         * El formulario sintético declara renta, así que el proceso
+         * debe exigir la certificación bancaria (siempre) y la
+         * declaración de renta (condicional).
          */
         const context = await test.step(
             'PREPARACIÓN · existe un proceso en etapa Documentos',
@@ -47,8 +54,8 @@ test(
             processId,
         } = context;
 
-        const declaration =
-            buildSyntheticDeclaration();
+        let required: RequiredDocument[] = [];
+        const uploaded: Record<string, SyntheticDocument> = {};
 
         /*
          * ============================================================
@@ -57,7 +64,7 @@ test(
          */
 
         await test.step(
-            'DADO un proceso que requiere la declaración de renta',
+            'DADO un proceso que requiere certificación bancaria y declaración de renta',
             async () => {
                 await expect(
                     page.locator(
@@ -65,78 +72,124 @@ test(
                     )
                 ).toBeVisible();
 
-                await expect(
-                    page.locator(
-                        '#process-documents-input'
-                    )
-                ).toHaveCount(1);
+                required =
+                    await readRequiredDocuments(
+                        page
+                    );
 
-                await expect(
-                    page.locator(
-                        '#process-documents-empty'
-                    )
-                ).toBeVisible();
+                expect(
+                    required.map((d) => d.fileType).sort()
+                ).toEqual(
+                    ['BANK_CERT', 'TAX_DECLARATION']
+                );
 
+                for (const doc of required) {
+                    await expect(
+                        page.locator(
+                            `#process-documents-input-${doc.slug}`
+                        )
+                    ).toHaveCount(1);
+
+                    await expect(
+                        page.locator(
+                            `#process-documents-empty-${doc.slug}`
+                        )
+                    ).toBeVisible();
+
+                    await expect(
+                        page.locator(
+                            `#process-documents-error-${doc.slug}`
+                        )
+                    ).toHaveCount(0);
+                }
+
+                /*
+                 * Sin documentos no se puede continuar a firma.
+                 */
                 await expect(
                     page.locator(
-                        '#process-documents-error'
+                        '#process-advance-documents'
                     )
-                ).toHaveCount(0);
+                ).toBeDisabled();
             }
         );
 
         await test.step(
             'CUANDO el inversionista adjunta la documentación requerida',
             async () => {
-                await page
-                    .locator(
-                        '#process-documents-input'
-                    )
-                    .setInputFiles(
-                        declaration
-                    );
+                for (const doc of required) {
+                    const file =
+                        buildSyntheticDocument(
+                            doc.slug
+                        );
+
+                    uploaded[doc.slug] =
+                        file;
+
+                    await page
+                        .locator(
+                            `#process-documents-input-${doc.slug}`
+                        )
+                        .setInputFiles(
+                            file
+                        );
+                }
             }
         );
 
         await test.step(
-            'ENTONCES el documento queda registrado y disponible en el proceso',
+            'ENTONCES cada documento queda registrado y el proceso puede continuar',
             async () => {
                 /*
                  * Oráculo principal.
                  *
-                 * El archivo debe reaparecer como documento
-                 * registrado por el sistema.
+                 * Cada archivo debe reaparecer como documento
+                 * registrado por el sistema (on_upload -> get-required-files).
                  */
-                await expect(
-                    page.locator(
-                        '#process-documents-file'
-                    )
-                ).toBeVisible({
-                    timeout: 40_000,
-                });
+                for (const doc of required) {
+                    await expect(
+                        page.locator(
+                            `#process-documents-file-${doc.slug}`
+                        )
+                    ).toBeVisible({
+                        timeout: 45_000,
+                    });
+
+                    await expect(
+                        page.locator(
+                            `#process-documents-file-${doc.slug}`
+                        )
+                    ).toContainText(
+                        uploaded[doc.slug].name
+                    );
+
+                    await expect(
+                        page.locator(
+                            `#process-documents-row-${doc.slug}`
+                        )
+                    ).toHaveAttribute(
+                        'data-uploaded',
+                        'true'
+                    );
+
+                    await expect(
+                        page.locator(
+                            `#process-documents-error-${doc.slug}`
+                        )
+                    ).toHaveCount(0);
+                }
 
                 await expect(
                     page.locator(
-                        '#process-documents-file'
-                    )
-                ).toContainText(
-                    declaration.name
-                );
-
-                /*
-                 * Existe acción de consulta del documento registrado.
-                 */
-                await expect(
-                    page.locator(
-                        '#process-documents-view'
+                        '#process-documents-complete'
                     )
                 ).toBeVisible();
 
                 await expect(
                     page.locator(
-                        '#process-documents-error'
+                        '#process-advance-documents'
                     )
-                ).toHaveCount(0);
+                ).toBeEnabled();
 
                 /*
                  * La etapa sigue siendo Documentos:
@@ -190,11 +243,18 @@ test(
 
                             termDays,
 
-                            uploadedDocument:
-                                declaration.name,
+                            requiredDocuments:
+                                required.map((d) => d.fileType),
+
+                            uploadedDocuments:
+                                Object.fromEntries(
+                                    Object.entries(uploaded).map(
+                                        ([slug, f]) => [slug, f.name]
+                                    )
+                                ),
 
                             resultingStage:
-                                'documents',
+                                'DOCUMENTS',
 
                             finalUrl:
                                 page.url(),
@@ -210,7 +270,7 @@ test(
         );
 
         await testInfo.attach(
-            'evidencia-documento-registrado',
+            'evidencia-documentos-registrados',
             {
                 body:
                     await page.screenshot({
