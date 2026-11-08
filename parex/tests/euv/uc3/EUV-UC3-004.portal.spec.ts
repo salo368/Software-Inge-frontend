@@ -6,10 +6,10 @@ import {
 import {
     completeProcessForm,
     createProcessAtFormStage,
-    uploadSyntheticDeclaration,
+    uploadRequiredDocuments,
 } from '../../support/uc3/process-flow';
 
-test.setTimeout(120_000);
+test.setTimeout(240_000);
 
 test(
     'EUV-UC3-004 · avanzar de documentación completa a firma',
@@ -27,9 +27,12 @@ test(
          *   ↓
          * documentos
          *   ↓
-         * declaración registrada
+         * documentos requeridos registrados
          *
          * La transición Documentos -> Firma todavía NO se ejecuta.
+         * (El backend puede abrir la firma en segundo plano apenas los
+         * documentos están completos; el portal solo cambia de etapa
+         * cuando el inversionista pide continuar.)
          */
         const preparation = await test.step(
             'PREPARACIÓN · existe un proceso con documentación registrada',
@@ -43,21 +46,21 @@ test(
                     page
                 );
 
-                const declaration =
-                    await uploadSyntheticDeclaration(
+                const documents =
+                    await uploadRequiredDocuments(
                         page
                     );
 
                 return {
                     process,
-                    declaration,
+                    documents,
                 };
             }
         );
 
         const {
             process: processContext,
-            declaration,
+            documents,
         } = preparation;
 
         const {
@@ -82,19 +85,21 @@ test(
                     )
                 ).toBeVisible();
 
-                await expect(
-                    page.locator(
-                        '#process-documents-file'
-                    )
-                ).toBeVisible();
+                for (const doc of documents) {
+                    await expect(
+                        page.locator(
+                            `#process-documents-file-${doc.slug}`
+                        )
+                    ).toContainText(
+                        doc.name
+                    );
+                }
 
                 await expect(
                     page.locator(
-                        '#process-documents-file'
+                        '#process-documents-complete'
                     )
-                ).toContainText(
-                    declaration.name
-                );
+                ).toBeVisible();
 
                 /*
                  * Existe el estímulo específico para abandonar
@@ -134,12 +139,34 @@ test(
             async () => {
                 /*
                  * Oráculo principal.
+                 *
+                 * generate_sign llena la orden de inversión y abre la
+                 * firma en segundo plano: puede tardar varios segundos
+                 * (más con cold start).
                  */
                 await expect(
                     page.locator(
                         '#process-stage-signature'
                     )
                 ).toBeVisible({
+                    timeout: 120_000,
+                });
+
+                await expect(
+                    page.locator('#process-header')
+                ).toHaveAttribute(
+                    'data-stage',
+                    'SIGNATURE'
+                );
+
+                /*
+                 * La firma ya existe y se puede iniciar.
+                 */
+                await expect(
+                    page.locator(
+                        '#process-signature-start'
+                    )
+                ).toBeEnabled({
                     timeout: 15_000,
                 });
 
@@ -221,11 +248,14 @@ test(
 
                             termDays,
 
-                            uploadedDocument:
-                                declaration.name,
+                            uploadedDocuments:
+                                documents.map((d) => ({
+                                    fileType: d.fileType,
+                                    name: d.name,
+                                })),
 
                             resultingStage:
-                                'signature',
+                                'SIGNATURE',
 
                             finalUrl:
                                 page.url(),

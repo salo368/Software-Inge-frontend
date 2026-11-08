@@ -2,23 +2,32 @@
 
 End-to-end smoke tests for the signing feature. Two specs:
 
-| Spec | What it covers | Depends on |
+| Spec | What it covers | Status |
 | --- | --- | --- |
-| `specs/signing-standalone.spec.ts` | Opens a raw ceremony via `POST /signatures` and drives the wizard through every screen up to the async sign boundary. Doesn't touch the portal. | signatures API + service key + face fixture |
-| `specs/portal-to-payment.spec.ts` | Full journey: register user, seed process, open portal, click "Firmar ahora", complete the ceremony, return to portal, land on payment. | all backend services + face fixture |
+| `specs/signing-standalone.spec.ts` | Seeds a process to `SIGNATURE` via API, opens `/sign/{signature_id}?e2e=1` with no `return_url` and drives the wizard from `FORM` to `OTP`. | active (needs face fixture) |
+| `specs/portal-to-payment.spec.ts` | Full journey: register user, seed process, open portal, click "Firmar ahora", complete the ceremony, return to portal, land on payment. | `fixme` (needs the OTP) |
 
 Both use the `window.__signingE2E` hook installed by
-`projects/signing/src/app/core/e2e-hooks.ts`. The hook is gated by
-`environment.stage === 'dev'` AND `?e2e=1` on the URL, so it never
-ships in the pro bundle and cannot be exercised against a prod
-deployment even if someone knew a `sign_id`.
+`projects/signing/src/app/core/e2e-hooks.ts`. The hook is gated by an
+E2E-enabled `environment.stage` AND `?e2e=1` on the URL.
+
+Signatures can no longer be opened over HTTP (`create_signature` is an
+internal Lambda that only `processes.generate_sign` calls), so the seed
+walks the real process flow: `create-process` -> `upsert-form` ->
+`set-process-form` -> upload `BANK_CERT` -> poll until the process has a
+`signature_id`.
+
+**OTP:** the backend dropped the debug OTP echo; `set-otp` only emails the
+code. Anything past the OTP screen needs a real source of the code (test
+mailbox or test endpoint). Until then `portal-to-payment` is `fixme`. PAREX
+(`parex/`) covers the same journey and has the same limitation.
 
 ## Quick start
 
 ```bash
 cd Software-Inge-frontend
 cp e2e/.env.example e2e/.env
-# fill in FRONTEND_BASE_URL, SIGNATURES_SERVICE_KEY, DEBUG_OTP_KEY_HEX, etc.
+# fill in FRONTEND_BASE_URL and the *_API_URL values
 # optionally: export SIGNATURES_TEST_FACE_PATH=/absolute/path/to/face.jpg
 
 npm install                 # first time only
@@ -34,13 +43,9 @@ npm run e2e:ui              # interactive Playwright inspector
 See `.env.example` for the full annotated template. TL;DR:
 
 * `FRONTEND_BASE_URL` -- CloudFront root, e.g. `https://d1xxx.cloudfront.net`.
-* `*_API_URL` -- one per backend service. Get them with
+* `AUTH_API_URL`, `BANKS_API_URL`, `FORMS_API_URL`, `FILES_API_URL`,
+  `PROCESSES_API_URL` -- one per backend service. Get them with
   `aws cloudformation describe-stacks --stack-name cdts-dev-<svc>`.
-* `SIGNATURES_SERVICE_KEY` -- shared M2M secret. In SSM at
-  `/cdts/dev/signatures/service-key`.
-* `DEBUG_OTP_KEY_HEX` -- unlocks the `_debug_otp` echo in
-  `request_otp`. In SSM at `/cdts/dev/signatures/debug-otp-key`
-  (only bootstrapped in dev by `scripts/bootstrap-signatures-v2.sh`).
 * `SIGNATURES_TEST_FACE_PATH` -- optional. When unset, both specs
   skip. See `fixtures/README.md`.
 
@@ -49,9 +54,7 @@ See `.env.example` for the full annotated template. TL;DR:
 `camera-capture.component` reads from `<video>` populated by
 `getUserMedia`. Even with Chromium's fake video device, the guide-box
 crop is fiddly and the frames aren't recognized as faces by
-Rekognition (blank green square). We'd have to build + serve a Y4M
-face video, then race the video's timestamp against the "click
-capture" moment.
+Rekognition (blank green square).
 
 The hook wires the same evidence blobs into the same `onCaptured` /
 `submitSignature` code paths the real UI uses, so the wizard state
@@ -66,6 +69,5 @@ Full rationale is in
 ## CI
 
 `.github/workflows/e2e.yml` runs the suite on manual dispatch against
-dev. Not part of the deploy-dev pipeline (yet) because the async sign
-worker takes 30-90s and we don't want to slow every push. Trigger it
-before promoting to pro.
+dev. It reads the API URLs from the `dev` environment vars, including
+`FORMS_API_URL`.

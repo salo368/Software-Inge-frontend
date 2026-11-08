@@ -8,9 +8,7 @@ export const environment = {
   filesApiUrl: 'https://baa5v46yi0.execute-api.us-east-1.amazonaws.com',
   formsApiUrl: 'https://l5630m0078.execute-api.us-east-1.amazonaws.com',
   processesApiUrl: 'https://vt35i4tnwb.execute-api.us-east-1.amazonaws.com',
-  // TODO(C11): reemplazar con el HttpApiUrl real tras el primer deploy de
-  // cdts-staging-documents (el servicio todavía no existe en AWS).
-  documentsApiUrl: 'https://PENDING-FIRST-DEPLOY.execute-api.us-east-1.amazonaws.com',
-  // signaturesApiUrl intentionally omitted from shared. See the dev env
-  // for the rationale (browser must not talk to the signatures API).
+  paymentsApiUrl: 'https://sgzwzwllx5.execute-api.us-east-1.amazonaws.com',
+  // Read-only from the portal (see the dev env for the rationale).
+  signaturesApiUrl: 'https://zmbc5s5woj.execute-api.us-east-1.amazonaws.com',
 };

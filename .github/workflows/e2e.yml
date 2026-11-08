@@ -65,11 +65,9 @@ jobs:
           FRONTEND_BASE_URL: ${{ vars.FRONTEND_BASE_URL }}
           AUTH_API_URL: ${{ vars.AUTH_API_URL }}
           BANKS_API_URL: ${{ vars.BANKS_API_URL }}
+          FORMS_API_URL: ${{ vars.FORMS_API_URL }}
           FILES_API_URL: ${{ vars.FILES_API_URL }}
           PROCESSES_API_URL: ${{ vars.PROCESSES_API_URL }}
-          SIGNATURES_API_URL: ${{ vars.SIGNATURES_API_URL }}
-          SIGNATURES_SERVICE_KEY: ${{ secrets.SIGNATURES_SERVICE_KEY }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.DEBUG_OTP_KEY_HEX }}
         run: |
           if [ -n "${{ inputs.spec }}" ]; then
             npx playwright test --grep "${{ inputs.spec }}"

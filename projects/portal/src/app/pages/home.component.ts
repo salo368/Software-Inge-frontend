@@ -6,22 +6,31 @@ import { AnimatedMoneyComponent } from '@shared/components/animated-money.compon
 import { AuthService } from '@shared/core/auth.service';
 import { BanksService, Bank } from '@shared/core/banks.service';
 import { formatCOP } from '@shared/core/format';
-import { ProcessRow, ProcessStage, ProcessesService } from '@shared/core/processes.service';
+import {
+  ProcessRow,
+  ProcessStage,
+  ProcessesService,
+  projectedInterest,
+} from '@shared/core/processes.service';
 
 const STAGE_LABEL: Record<ProcessStage, string> = {
-  form: 'Diligenciando datos',
-  documents: 'Cargando documentos',
-  signature: 'Firma pendiente',
-  payment: 'Pago pendiente',
-  done: 'CDT activo',
+  FORM: 'Diligenciando datos',
+  DOCUMENTS: 'Cargando documentos',
+  SIGNATURE: 'Firma pendiente',
+  PAYMENT: 'Pago pendiente',
+  REVIEW: 'Pago en revision',
+  SENT_TO_BANK: 'Enviado al banco',
+  COMPLETED: 'CDT activo',
 };
 
 const STAGE_CLASS: Record<ProcessStage, string> = {
-  form: 'text-bg-warning',
-  documents: 'text-bg-warning',
-  signature: 'text-bg-info',
-  payment: 'text-bg-info',
-  done: 'text-bg-success',
+  FORM: 'text-bg-warning',
+  DOCUMENTS: 'text-bg-warning',
+  SIGNATURE: 'text-bg-info',
+  PAYMENT: 'text-bg-info',
+  REVIEW: 'text-bg-primary',
+  SENT_TO_BANK: 'text-bg-primary',
+  COMPLETED: 'text-bg-success',
 };
 
 interface Row {
@@ -73,8 +82,7 @@ export class HomeComponent implements OnInit {
   }
 
   interest(p: ProcessRow): number {
-    const factor = Math.pow(1 + p.rate / 100, p.term_days / 365) - 1;
-    return Math.round(p.amount * factor);
+    return projectedInterest(p);
   }
 
   logout(): void {

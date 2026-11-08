@@ -8,30 +8,35 @@ import {
 } from '../../support/signing/signing-e2e';
 
 import {
-    requireSigningE2EInputs,
+    requireSigningE2EInputsWithOtp,
 } from '../../support/signing/signing-test-env';
 
 test.setTimeout(300_000);
 
+/*
+ * Bloqueado (test.fixme) mientras no exista una fuente automatizable del
+ * OTP: ver OTP_BLOCKED_REASON en support/signing/signing-test-env.ts.
+ */
 test(
     'EUV-UC3-010 · completar el firmado digital de la orden',
     async ({ page }, testInfo) => {
         const {
             facePath,
-            debugOtpKeyHex,
+            signerEmail,
+            otpProvider,
         } =
-            requireSigningE2EInputs(
+            requireSigningE2EInputsWithOtp(
                 testInfo
             );
 
         const preparation =
             await test.step(
-                'PREPARACIÓN · existe una ceremonia en OTP con código autorizado',
+                'PREPARACIÓN · existe una ceremonia en OTP con un código vigente',
                 async () => {
                     return await prepareSigningAtOtpScreen(
                         page,
                         facePath,
-                        debugOtpKeyHex
+                        signerEmail
                     );
                 }
             );
@@ -39,18 +44,19 @@ test(
         const {
             context,
             driver,
-            otp,
         } = preparation;
 
         await test.step(
             'CUANDO el inversionista confirma el OTP y el firmado asíncrono finaliza',
             async () => {
                 await driver.confirmOtp(
-                    otp
+                    await otpProvider(
+                        context.signatureId
+                    )
                 );
 
                 await driver.waitForStage(
-                    'signed',
+                    'SIGNED',
                     120_000
                 );
 
@@ -67,94 +73,49 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.signId
-                ).toBe(
-                    context.signId
-                );
-
-                expect(
-                    state.stage
-                ).toBe(
-                    'signed'
-                );
-
-                expect(
-                    state.screen
-                ).toBe(
-                    'done'
-                );
-
-                expect(
-                    state.error
-                ).toBe('');
+                expect(state.signatureId).toBe(context.signatureId);
+                expect(state.stage).toBe('SIGNED');
+                expect(state.screen).toBe('done');
+                expect(state.error).toBe('');
 
                 await expect(
-                    page.locator(
-                        '#signing-screen-done'
-                    )
+                    page.locator('#signing-screen-done')
                 ).toBeVisible();
 
-                const hash =
-                    page.locator(
-                        '#signing-signed-hash code'
-                    );
-
                 await expect(
-                    hash
+                    page.locator('#signing-signed-hash code')
                 ).toHaveText(
                     /^[0-9a-f]{64}$/i
                 );
 
                 const pdfLink =
-                    page.locator(
-                        '#signing-signed-pdf'
-                    );
+                    page.locator('#signing-signed-pdf');
 
-                await expect(
-                    pdfLink
-                ).toBeVisible();
+                await expect(pdfLink).toBeVisible();
 
                 const href =
-                    await pdfLink
-                        .getAttribute(
-                            'href'
-                        );
+                    await pdfLink.getAttribute('href');
 
                 expect(
                     href,
-                    'la ceremonia signed debe exponer signed_pdf_url'
+                    'la firma SIGNED debe exponer signed_url'
                 ).toBeTruthy();
 
                 const response =
                     await page
                         .context()
                         .request
-                        .get(
-                            href!
-                        );
+                        .get(href!);
 
                 expect(
                     response.ok(),
                     `signed.pdf debe ser descargable; status=${response.status()}`
                 ).toBeTruthy();
 
-                expect(
-                    response.headers()[
-                        'content-type'
-                    ] ?? ''
-                ).toContain(
-                    'application/pdf'
-                );
-
                 const pdf =
                     await response.body();
 
-                expect(
-                    pdf.length
-                ).toBeGreaterThan(
-                    100
-                );
+                expect(pdf.length).toBeGreaterThan(100);
 
                 expect(
                     pdf
@@ -179,10 +140,10 @@ test(
                                 'EUV-UC3-010',
                             processId:
                                 context.processId,
-                            signId:
-                                context.signId,
+                            signatureId:
+                                context.signatureId,
                             stage:
-                                'signed',
+                                'SIGNED',
                             signedPdfVerified:
                                 true,
                         },

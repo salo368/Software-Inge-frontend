@@ -1,9 +1,9 @@
 /**
  * Thin wrapper around `window.__signingE2E` (the hook installed by
  * `projects/signing/src/app/core/e2e-hooks.ts`). Each method here
- * corresponds to one action in the wizard and returns once the wizard
- * has settled to the next stable state, so the spec reads like a
- * sequential script instead of a chain of `waitFor`s.
+ * corresponds to one action in the wizard and returns once the SPA call
+ * settles, so the spec reads like a sequential script instead of a chain
+ * of `waitFor`s.
  *
  * The driver is intentionally opinionated: it always talks to the hook
  * via `page.evaluate` and never touches the underlying HTTP APIs. That
@@ -14,23 +14,19 @@
 import type { Page } from '@playwright/test';
 
 import type { E2EScreen, E2EState } from '../../projects/signing/src/app/core/e2e-hooks';
-import type { CeremonyStage } from '../../projects/signing/src/app/core/signatures.service';
+import type { BiometricType, SignatureStage } from '../../projects/signing/src/app/core/signatures.service';
 
-/** Time budget for waiting for the E2E hook to appear on `window`.
- *  Angular hydration usually finishes in well under 5 seconds. */
+/** Time budget for waiting for the E2E hook to appear on `window`. */
 const HOOK_INSTALL_TIMEOUT_MS = 15_000;
 
-/** Time budget for the async sign worker (verify_otp -> stage='signed').
- *  Real worker time is 30-90s including a cold start on a quiet dev
- *  environment. 3 minutes leaves plenty of headroom. */
-export const SIGN_WORKER_TIMEOUT_MS = 180_000;
+/** Time budget for sign_doc (resolve-otp -> SIGNED). The backend fails it
+ *  after 60 s; 2 minutes leaves headroom for polling. */
+export const SIGN_WORKER_TIMEOUT_MS = 120_000;
+
+type Hook = Record<string, (...args: unknown[]) => unknown>;
 
 export class SigningDriver {
   constructor(private readonly page: Page) {}
-
-  // -------------------------------------------------------------------------
-  // Lifecycle
-  // -------------------------------------------------------------------------
 
   /** Blocks until `window.__signingE2E` is installed by the SPA. */
   async waitReady(): Promise<void> {
@@ -41,123 +37,51 @@ export class SigningDriver {
     );
   }
 
-  /** Provision the debug OTP key so any subsequent `request_otp` call
-   *  attaches `X-Debug-OTP-Signature` and the backend echoes the code. */
-  async setDebugOtpKey(hex: string): Promise<void> {
-    await this.page.evaluate(
-      (k) =>
-        (window as unknown as { __signingE2E: { setDebugOtpKey: (k: string) => void } })
-          .__signingE2E.setDebugOtpKey(k),
-      hex,
-    );
-  }
-
-  // -------------------------------------------------------------------------
-  // Introspection
-  // -------------------------------------------------------------------------
-
   /** Snapshot the current wizard state. */
   async state(): Promise<E2EState> {
     return this.page.evaluate(
-      () =>
-        (window as unknown as { __signingE2E: { getState: () => E2EState } })
-          .__signingE2E.getState(),
+      () => (window as unknown as { __signingE2E: { getState: () => E2EState } }).__signingE2E.getState(),
+    );
+  }
+
+  private call(method: string, ...args: unknown[]): Promise<unknown> {
+    return this.page.evaluate(
+      ({ method, args }) => (window as unknown as { __signingE2E: Hook }).__signingE2E[method](...args),
+      { method, args },
     );
   }
 
   async waitForScreen(screen: E2EScreen, timeoutMs = 30_000): Promise<void> {
-    await this.page.evaluate(
-      ({ s, t }) =>
-        (
-          window as unknown as {
-            __signingE2E: { waitForScreen: (s: string, t: number) => Promise<void> };
-          }
-        ).__signingE2E.waitForScreen(s, t),
-      { s: screen, t: timeoutMs },
-    );
+    await this.call('waitForScreen', screen, timeoutMs);
   }
 
-  async waitForStage(stage: CeremonyStage, timeoutMs = 60_000): Promise<void> {
-    await this.page.evaluate(
-      ({ s, t }) =>
-        (
-          window as unknown as {
-            __signingE2E: { waitForStage: (s: string, t: number) => Promise<void> };
-          }
-        ).__signingE2E.waitForStage(s, t),
-      { s: stage, t: timeoutMs },
-    );
+  async waitForStage(stage: SignatureStage, timeoutMs = 60_000): Promise<void> {
+    await this.call('waitForStage', stage, timeoutMs);
   }
-
-  // -------------------------------------------------------------------------
-  // Actions
-  // -------------------------------------------------------------------------
 
   async dismissReview(): Promise<void> {
-    await this.page.evaluate(() =>
-      (window as unknown as { __signingE2E: { goToIdentity: () => void } })
-        .__signingE2E.goToIdentity(),
-    );
+    await this.call('acknowledgeReview');
   }
 
-  async submitEvidence(
-    type: 'id_front' | 'id_back' | 'face',
-    base64: string,
-    mime = 'image/jpeg',
-  ): Promise<void> {
-    await this.page.evaluate(
-      ({ type, base64, mime }) =>
-        (
-          window as unknown as {
-            __signingE2E: {
-              submitEvidence: (t: string, b: string, m: string) => Promise<void>;
-            };
-          }
-        ).__signingE2E.submitEvidence(type, base64, mime),
-      { type, base64, mime },
-    );
+  /** Email + terms (FORM -> BIOMETRICS). */
+  async submitForm(email: string): Promise<void> {
+    await this.call('submitForm', email);
   }
 
+  async submitEvidence(type: BiometricType, base64: string, mime = 'image/jpeg'): Promise<void> {
+    await this.call('submitEvidence', type, base64, mime);
+  }
+
+  /** Drawing (SIGNATURE -> OTP); the SPA requests the first OTP itself. */
   async submitSignature(base64: string): Promise<void> {
-    await this.page.evaluate(
-      (b) =>
-        (
-          window as unknown as {
-            __signingE2E: {
-              submitSignature: (b: string) => Promise<void>;
-            };
-          }
-        ).__signingE2E.submitSignature(b),
-      base64,
-    );
+    await this.call('submitSignature', base64);
   }
 
-  async acceptConsent(): Promise<void> {
-    await this.page.evaluate(() =>
-      (
-        window as unknown as {
-          __signingE2E: { acceptConsent: () => Promise<void> };
-        }
-      ).__signingE2E.acceptConsent(),
-    );
+  async requestOtp(): Promise<void> {
+    await this.call('requestOtp');
   }
 
   async confirmOtp(code: string): Promise<void> {
-    await this.page.evaluate(
-      (c) =>
-        (
-          window as unknown as {
-            __signingE2E: { confirmOtp: (c: string) => Promise<void> };
-          }
-        ).__signingE2E.confirmOtp(c),
-      code,
-    );
-  }
-
-  /** Convenience: pull the debug OTP echoed back by `request_otp` when
-   *  the debug key is installed. Empty when the key is missing or the
-   *  request hasn't been made yet. */
-  async debugOtp(): Promise<string> {
-    return (await this.state()).debugOtp;
+    await this.call('confirmOtp', code);
   }
 }

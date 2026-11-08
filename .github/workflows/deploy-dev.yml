@@ -440,7 +440,6 @@ jobs:
         env:
           TEST_USER_EMAIL: ${{ secrets.DEV_TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.DEV_TEST_USER_PASSWORD }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.DEV_DEBUG_OTP_KEY_HEX }}
           SIGNATURES_TEST_FACE_B64: ${{ secrets.DEV_SIGNATURES_TEST_FACE_B64 }}
         run: |
           set -euo pipefail
@@ -448,7 +447,6 @@ jobs:
           for variable in \
             TEST_USER_EMAIL \
             TEST_USER_PASSWORD \
-            DEBUG_OTP_KEY_HEX \
             SIGNATURES_TEST_FACE_B64
           do
             if [[ -z "${!variable:-}" ]]; then
@@ -483,7 +481,6 @@ jobs:
           TEST_ENV: dev
           TEST_USER_EMAIL: ${{ secrets.DEV_TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.DEV_TEST_USER_PASSWORD }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.DEV_DEBUG_OTP_KEY_HEX }}
         run: npm run parex:e2e
 
       - name: Upload PAREX evidence

@@ -34,7 +34,7 @@
         [attr.data-bank-id]="row.proc.bank_id"
         [attr.data-stage]="row.proc.stage"
         [attr.data-amount]="row.proc.amount"
-        [attr.data-term-days]="row.proc.term_days"
+        [attr.data-term-days]="row.proc.term"
         [routerLink]="['/process', row.proc.id]"
         class="card h-100 shadow-sm text-decoration-none text-body bank-card"
       >
@@ -80,7 +80,7 @@
                 [id]="'portal-process-term-' + row.proc.id"
                 class="fw-semibold"
               >
-                {{ row.proc.term_days }} dias
+                {{ row.proc.term }} dias
               </span>
             </div>
             <div class="d-flex justify-content-between">

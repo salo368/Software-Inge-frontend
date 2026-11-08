@@ -1,20 +1,13 @@
 /**
- * v2 signatures API client.
+ * Client of the `signatures` service (backend docs/signatures-api.md).
  *
- * The signing SPA is the ONLY consumer of this service. It talks
- * exclusively to the `signatures` service (never to `processes`), and
- * uses the `sign_id` in the URL as the capability token -- there is no
- * user session or bearer token layered on top.
+ * The signing SPA is the only consumer that drives a signature. It talks
+ * exclusively to `signatures` and uses the `signature_id` in the URL as the
+ * capability token: no endpoint takes a bearer token. Each endpoint also
+ * checks the current stage, so steps cannot be skipped.
  *
- * Endpoints implemented here mirror the backend one-to-one. The
- * response shape of `get()` matches the enriched payload landed in
- * backend PR #70 (`Signatures.public_dict()` + handler extras).
- *
- * Naming quirk documented for future you: the ORM stores the drawn
- * signature under the key `signature`, while the HTTP API accepts
- * `signature_drawing` as the `evidence_type` in POST /upload-url. Both
- * appear here as `EvidenceTypeApi` / `EvidenceOrmKey` respectively;
- * `EVIDENCE_ORM_TO_API` bridges them.
+ * Signatures are not opened over HTTP: `processes.generate_sign` opens them
+ * Lambda-to-Lambda, and the portal hands the id to this block.
  */
 
 import { HttpClient } from '@angular/common/http';
@@ -24,392 +17,221 @@ import { Observable, from, map, switchMap, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 
 // ---------------------------------------------------------------------------
-// Stage machine (mirrors libs/orm/signatures.Signatures.stage)
+// Lifecycle (backend enum `SignatureStage`, §3)
 // ---------------------------------------------------------------------------
 
-export type CeremonyStage =
-  | 'created'
-  | 'identity'
-  | 'consent'
-  | 'otp'
-  | 'signing'
-  | 'signed'
-  | 'failed'
-  | 'expired';
+export type SignatureStage =
+  | 'FORM'
+  | 'BIOMETRICS'
+  | 'SIGNATURE'
+  | 'OTP'
+  | 'SIGNING'
+  | 'SIGNED'
+  | 'FAILED';
 
-/** Terminal stages: the ceremony cannot advance further. */
-export const TERMINAL_STAGES: readonly CeremonyStage[] = [
-  'signed',
-  'failed',
-  'expired',
-];
+/** Terminal stages: the signature cannot advance further. */
+export const TERMINAL_STAGES: readonly SignatureStage[] = ['SIGNED', 'FAILED'];
 
-/** Order used for "is server ahead of me?" comparisons. Terminals excluded on
- *  purpose -- they need dedicated handling, not a linear >= check. */
-export const STAGE_ORDER: readonly CeremonyStage[] = [
-  'created',
-  'identity',
-  'consent',
-  'otp',
-  'signing',
-  'signed',
-];
+/** 15-minute window from `created_at` (`SIGNING_WINDOW`). */
+export const SIGNING_WINDOW_MS = 15 * 60 * 1000;
+/** Each OTP lives 2 minutes (`OTP_TTL`). */
+export const OTP_TTL_MS = 2 * 60 * 1000;
+/** Third wrong code fails the signature (`MAX_OTP_TRIES`). */
+export const MAX_OTP_TRIES = 3;
 
 // ---------------------------------------------------------------------------
-// Evidence naming
+// Biometrics
 // ---------------------------------------------------------------------------
 
-/** What the HTTP API accepts as `evidence_type` in POST /upload-url. */
-export type EvidenceTypeApi =
-  | 'id_front'
-  | 'id_back'
-  | 'face'
-  | 'signature_drawing';
+export type BiometricType = 'ID_FRONT' | 'ID_BACK' | 'FACE';
 
-/** What the ORM (and therefore GET /signatures/{sign_id}.uploads_state) uses. */
-export type EvidenceOrmKey = 'id_front' | 'id_back' | 'face' | 'signature';
+export const BIOMETRIC_TYPES: readonly BiometricType[] = ['ID_FRONT', 'ID_BACK', 'FACE'];
 
-/** Bridge ORM -> API. Used when the SPA reads uploads_state and then wants to
- *  re-upload the corresponding evidence. */
-export const EVIDENCE_ORM_TO_API: Record<EvidenceOrmKey, EvidenceTypeApi> = {
-  id_front: 'id_front',
-  id_back: 'id_back',
-  face: 'face',
-  signature: 'signature_drawing',
-};
+export type BiometricContentType = 'image/jpeg' | 'image/png';
 
-/** Reverse bridge. Useful when a UI component owns EvidenceTypeApi and wants
- *  to peek into uploads_state for that evidence's current status. */
-export const EVIDENCE_API_TO_ORM: Record<EvidenceTypeApi, EvidenceOrmKey> = {
-  id_front: 'id_front',
-  id_back: 'id_back',
-  face: 'face',
-  signature_drawing: 'signature',
-};
+/** `GET /signatures/get-required-biometrics`: `true` once validated. */
+export type RequiredBiometrics = Record<BiometricType, boolean>;
+
+/**
+ * `reason` of `POST /signatures/set-biometrics`. A rejected evidence is a 200
+ * with `is_valid: false`; it can be re-uploaded and validated again.
+ */
+export type BiometricReason =
+  | 'ok'
+  | 'evidence_missing'
+  | 'evidence_too_large'
+  | 'too_few_legible_lines'
+  | 'no_id_number_detected'
+  | 'no_face_detected'
+  | 'multiple_faces'
+  | 'low_confidence'
+  | 'eyes_closed';
+
+export interface BiometricValidation {
+  is_valid: boolean;
+  reason: BiometricReason | string;
+}
 
 // ---------------------------------------------------------------------------
-// GET /signatures/{sign_id} response types
+// GET /signatures/get-signature
 // ---------------------------------------------------------------------------
 
-export interface SignatureLocation {
+/** One signature box, in percentages from the top-left corner. */
+export interface SignLocation {
+  /** 1-based. */
   page: number;
   x_pct: number;
   y_pct: number;
+  /** Default 25. */
   width_pct?: number;
+  /** Derived from the drawing's aspect ratio when missing. */
   height_pct?: number;
 }
 
-export interface EvidenceUploadState {
-  uploaded: boolean;
-  /** `null` for the drawn signature (no crypto validation step), `true`/`false`
-   *  for the three biometric evidences. */
-  validated: boolean | null;
-  key: string | null;
-  validated_at: string | null;
-}
-
-export type UploadsState = Record<EvidenceOrmKey, EvidenceUploadState>;
-
-export interface ConsentState {
-  given: boolean;
-  given_at: string | null;
-  terms_version: string | null;
-}
-
-export interface OtpState {
-  requested: boolean;
-  expires_at: string | null;
-  attempts_left: number;
-}
-
-export interface Ceremony {
-  sign_id: string;
-  stage: CeremonyStage;
-  signer_name: string | null;
-  signer_email_masked: string;
-  signature_location: SignatureLocation;
-  uploads_state: UploadsState;
-  consent: ConsentState;
-  otp: OtpState;
-  /** SHA-256 hex of the original PDF (safe to display for transparency). */
-  hash_original: string;
-  hash_signed: string | null;
-  cert_serial: string | null;
-  signed_at: string | null;
-  created_at: string;
+export interface Signature {
+  id: string;
+  stage: SignatureStage;
+  sign_location: SignLocation[];
+  /** Presigned GET (15 min) of the original, unsigned PDF. */
+  doc_url: string;
+  /** End of the signing window (`created_at` + 15 min). */
   expires_at: string;
-  /** Presigned GET for original.pdf (15-min TTL). */
-  pdf_url: string;
-  /** Presigned GET for signed.pdf. Only present when stage === 'signed'. */
-  signed_pdf_url?: string;
+  /** PDF with the drawing stamped, no evidence page. `null` until SIGNED. */
+  raw_signed_url: string | null;
+  /** Final PDF: drawing + evidence page + PAdES-B. `null` until SIGNED. */
+  signed_url: string | null;
+  /** SHA-256 of `raw_signed` (the one printed on the evidence page). */
+  doc_hash: string | null;
+  /** SHA-256 of `signed`. */
+  signed_hash: string | null;
+  signed_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
-// Method-specific response shapes
+// Mutation responses
 // ---------------------------------------------------------------------------
 
-export interface UploadUrlResponse {
+export interface StageResponse {
+  id: string;
+  stage: SignatureStage;
+}
+
+interface BiometricUploadUrl {
   upload_url: string;
+  /** `signatures/<signature_id>/<type>.<ext>`; goes back in set-biometrics. */
   key: string;
+  content_type: BiometricContentType;
   expires_in: number;
 }
 
-export interface EvidenceValidationResponse {
-  sign_id: string;
-  stage: CeremonyStage;
-  /** Only for id_front / id_back -- number of textract lines detected. */
-  detected_lines?: number;
+export interface SetOtpResponse extends StageResponse {
+  /** `false`: the mail server refused it; the code exists but did not arrive. */
+  email_sent: boolean;
+  expires_at: string;
 }
 
-export interface RegisterSignatureResponse {
-  sign_id: string;
-  stage: CeremonyStage;
-  bytes: number;
+/** Error bodies the SPA branches on. `attempts_left` only on `otp_invalid`. */
+export interface SignatureApiError {
+  error: string;
+  attempts_left?: number;
 }
 
-export interface ConsentResponse {
-  sign_id: string;
-  stage: CeremonyStage;
-  consent: { given_at: string; terms_version: string };
-}
-
-export interface RequestOtpResponse {
-  sign_id: string;
-  stage: CeremonyStage;
-  signer_email_masked: string;
-  otp: {
-    expires_at: string;
-    attempts_left: number;
-    email_sent: boolean;
-  };
-  /** ONLY populated when the request carries a valid
-   *  `X-Debug-OTP-Signature` header AND the `debug-otp-key` SSM param
-   *  exists on the server (dev only). Used by Playwright/E2E tests to
-   *  skip the mailbox roundtrip. */
-  _debug_otp?: string;
-}
-
-export interface VerifyOtpResponse {
-  sign_id: string;
-  stage: CeremonyStage;
-}
-
-// ---------------------------------------------------------------------------
-// Debug OTP HMAC helper (browser side of backend's request_otp escape hatch)
-// ---------------------------------------------------------------------------
-
-/**
- * Compute `hex(HMAC-SHA256(key, sign_id))`. Must match the exact bytes
- * `_authorized_for_debug_otp` in
- * backend/services/signatures/src/handlers/request_otp/handler.py
- * verifies against `X-Debug-OTP-Signature`.
- *
- * @param debugKeyHex 64-hex-char string (the SecureString stored at
- *                    `/cdts/{stage}/signatures/debug-otp-key`).
- * @param signId      Ceremony capability token.
- */
-export async function debugOtpSignature(
-  debugKeyHex: string,
-  signId: string,
-): Promise<string> {
-  if (!/^[0-9a-fA-F]+$/.test(debugKeyHex) || debugKeyHex.length % 2 !== 0) {
-    throw new Error('debugKeyHex must be an even-length hex string');
-  }
-
-  // IMPORTANT:
-  // The backend stores the SSM value as a hexadecimal-looking STRING
-  // and uses `value.encode()` as the HMAC key.
-  //
-  // Therefore the browser must use the UTF-8 bytes of the 64-character
-  // string itself. It must NOT decode each pair of hex characters into
-  // a 32-byte binary key.
-  const keyBytes = new TextEncoder().encode(debugKeyHex);
-
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    keyBytes,
-    {
-      name: 'HMAC',
-      hash: 'SHA-256',
-    },
-    false,
-    ['sign'],
-  );
-
-  const signature = await crypto.subtle.sign(
-    'HMAC',
-    cryptoKey,
-    new TextEncoder().encode(signId),
-  );
-
-  return Array.from(new Uint8Array(signature))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
-/**
- * Drives a signing ceremony from its `sign_id`. Creating the ceremony
- * (`POST /signatures` with `X-Service-Key`) is the host's job -- the
- * SPA only sees the `sign_id` via the URL.
- */
 @Injectable({ providedIn: 'root' })
 export class SignaturesService {
   private http = inject(HttpClient);
   private base = environment.signaturesApiUrl;
 
-  // -------------------------------------------------------------------------
-  // Read
-  // -------------------------------------------------------------------------
-
-  /** Full ceremony state. Poll this on a timer to detect stage transitions
-   *  driven by other tabs / the async sign worker. */
-  get(signId: string): Observable<Ceremony> {
-    return this.http.get<Ceremony>(`${this.base}/signatures/${signId}`);
-  }
-
-  // -------------------------------------------------------------------------
-  // Evidence upload
-  // -------------------------------------------------------------------------
-
-  /** Presign a PUT to the signatures bucket. `contentType` MUST be one
-   *  of the values accepted by `upload_url._EVIDENCE_MAP` for the given
-   *  evidence type (`image/jpeg`|`image/png` for photos, `image/png`
-   *  for the drawn signature).
+  /**
+   * Current state plus presigned URLs. Answers `410 signature_expired` once
+   * the window closed, except in SIGNING/SIGNED/FAILED so the SPA can keep
+   * polling the outcome.
    */
-  presignEvidence(
-    signId: string,
-    evidenceType: EvidenceTypeApi,
-    contentType: string,
-  ): Observable<UploadUrlResponse> {
-    return this.http.post<UploadUrlResponse>(
-      `${this.base}/signatures/${signId}/upload-url`,
-      { evidence_type: evidenceType, content_type: contentType },
+  get(signatureId: string): Observable<Signature> {
+    return this.http.get<Signature>(`${this.base}/signatures/get-signature`, {
+      params: { signature_id: signatureId },
+    });
+  }
+
+  /** FORM -> BIOMETRICS. The email is where the OTP goes. */
+  setForm(signatureId: string, email: string): Observable<StageResponse & { email: string }> {
+    return this.http.post<StageResponse & { email: string }>(
+      `${this.base}/signatures/set-signature-form`,
+      { signature_id: signatureId, email },
     );
   }
 
-  /** PUT the raw bytes to the presigned URL. Returns void on success; the
-   *  server will read the object on the next validate/register call. */
-  private putBlob(url: string, blob: Blob, contentType: string): Observable<void> {
-    return from(
-      fetch(url, {
-        method: 'PUT',
-        // The signed URL was created with signature_version='s3v4' and
-        // implicitly includes the Content-Type in the signature, so we
-        // MUST echo it here or S3 will return SignatureDoesNotMatch.
-        headers: { 'Content-Type': contentType },
-        body: blob,
-      }),
-    ).pipe(
-      switchMap((resp) =>
-        resp.ok
-          ? [undefined as void]
-          : throwError(() => new Error(`S3 PUT failed (${resp.status})`)),
-      ),
-    );
-  }
-
-  /** Convenience: presign + PUT in a single chain. Returns the presign
-   *  metadata for callers that want the S3 key or the TTL. */
-  uploadEvidence(
-    signId: string,
-    evidenceType: EvidenceTypeApi,
+  /** Presign + PUT of one evidence. Returns the S3 key to validate. */
+  uploadBiometric(
+    signatureId: string,
+    type: BiometricType,
     blob: Blob,
-    contentType: string,
-  ): Observable<UploadUrlResponse> {
-    return this.presignEvidence(signId, evidenceType, contentType).pipe(
-      switchMap((presign) =>
-        this.putBlob(presign.upload_url, blob, contentType).pipe(map(() => presign)),
+    contentType: BiometricContentType,
+  ): Observable<string> {
+    return this.http
+      .post<BiometricUploadUrl>(`${this.base}/signatures/upload-biometrics`, {
+        signature_id: signatureId,
+        biometric_type: type,
+        content_type: contentType,
+      })
+      .pipe(switchMap((u) => this.putBlob(u.upload_url, blob, u.content_type).pipe(map(() => u.key))));
+  }
+
+  /** Rekognition analysis of an uploaded evidence; stores it when valid. */
+  setBiometric(signatureId: string, type: BiometricType, s3Key: string): Observable<BiometricValidation> {
+    return this.http.post<BiometricValidation>(`${this.base}/signatures/set-biometrics`, {
+      signature_id: signatureId,
+      biometric_type: type,
+      s3_key: s3Key,
+    });
+  }
+
+  /** Side effect: BIOMETRICS -> SIGNATURE once the three are `true`. */
+  requiredBiometrics(signatureId: string): Observable<RequiredBiometrics> {
+    return this.http.get<RequiredBiometrics>(`${this.base}/signatures/get-required-biometrics`, {
+      params: { signature_id: signatureId },
+    });
+  }
+
+  /**
+   * SIGNATURE -> OTP. Raw image bytes in the body (100 B .. 2 MB). It must be
+   * a PNG or JPEG: sign_doc stamps it on the PDF and fails otherwise.
+   */
+  setDraw(signatureId: string, image: Blob): Observable<StageResponse & { draw_s3_key: string }> {
+    return this.http.post<StageResponse & { draw_s3_key: string }>(
+      `${this.base}/signatures/set-signature-draw`,
+      image,
+      {
+        params: { signature_id: signatureId },
+        headers: { 'Content-Type': 'application/octet-stream' },
+      },
+    );
+  }
+
+  /** Emails a fresh 6-digit code (2 min) and resets the attempts. Also resends. */
+  setOtp(signatureId: string): Observable<SetOtpResponse> {
+    return this.http.post<SetOtpResponse>(`${this.base}/signatures/set-otp`, {
+      signature_id: signatureId,
+    });
+  }
+
+  /** OTP -> SIGNING and fires sign_doc; poll `get()` until SIGNED. */
+  resolveOtp(signatureId: string, code: string): Observable<StageResponse> {
+    return this.http.post<StageResponse>(`${this.base}/signatures/resolve-otp`, {
+      signature_id: signatureId,
+      code,
+    });
+  }
+
+  /** The URL is presigned with the content type, so it must be echoed as-is. */
+  private putBlob(url: string, blob: Blob, contentType: string): Observable<void> {
+    return from(fetch(url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: blob })).pipe(
+      switchMap((resp) =>
+        resp.ok ? [undefined as void] : throwError(() => new Error(`S3 PUT failed (${resp.status})`)),
       ),
-    );
-  }
-
-  // -------------------------------------------------------------------------
-  // Evidence validation (Rekognition / textract on the server)
-  // -------------------------------------------------------------------------
-
-  validateIdSide(
-    signId: string,
-    side: 'front' | 'back',
-  ): Observable<EvidenceValidationResponse> {
-    return this.http.post<EvidenceValidationResponse>(
-      `${this.base}/signatures/${signId}/evidence/id-${side}`,
-      {},
-    );
-  }
-
-  validateFace(signId: string): Observable<EvidenceValidationResponse> {
-    return this.http.post<EvidenceValidationResponse>(
-      `${this.base}/signatures/${signId}/evidence/face`,
-      {},
-    );
-  }
-
-  /** Marks the drawn signature PNG as accepted evidence. Must be called
-   *  AFTER `uploadEvidence(..., 'signature_drawing', ...)`. Once this
-   *  succeeds AND the three biometric evidences are validated, the
-   *  ceremony advances to `stage='consent'`. */
-  registerSignature(signId: string): Observable<RegisterSignatureResponse> {
-    return this.http.post<RegisterSignatureResponse>(
-      `${this.base}/signatures/${signId}/evidence/signature`,
-      {},
-    );
-  }
-
-  // -------------------------------------------------------------------------
-  // Consent + OTP
-  // -------------------------------------------------------------------------
-
-  /** Records the signer's explicit consent to sign. `termsVersion` must
-   *  match `_KNOWN_TERMS_VERSIONS` in
-   *  backend/services/signatures/src/handlers/consent/handler.py
-   *  (currently only `'v1.0'`).
-   *
-   *  Setting `consent_given_at` is what unblocks `request_otp`; the
-   *  stage stays `'consent'` after this call. */
-  consent(signId: string, termsVersion = 'v1.0'): Observable<ConsentResponse> {
-    return this.http.post<ConsentResponse>(
-      `${this.base}/signatures/${signId}/consent`,
-      { terms_version: termsVersion },
-    );
-  }
-
-  /** Issues a fresh OTP and emails it to the signer. Idempotent within
-   *  the OTP TTL: calling again while a code is live re-sends the same
-   *  code without incrementing counters.
-   *
-   *  When `debugKeyHex` is supplied (dev only), the SPA computes the
-   *  HMAC and passes it in `X-Debug-OTP-Signature`, causing the backend
-   *  to return the plaintext in `_debug_otp` for automated tests. In
-   *  prod builds this parameter should NEVER be populated -- the debug
-   *  key must not exist in the browser at all. */
-  requestOtp(
-    signId: string,
-    debugKeyHex?: string,
-  ): Observable<RequestOtpResponse> {
-    const url = `${this.base}/signatures/${signId}/otp`;
-    if (!debugKeyHex) {
-      return this.http.post<RequestOtpResponse>(url, {});
-    }
-    // Async HMAC signing wrapped as an Observable via `from(promise)`.
-    return from(debugOtpSignature(debugKeyHex, signId)).pipe(
-      switchMap((sig) =>
-        this.http.post<RequestOtpResponse>(url, {}, {
-          headers: { 'X-Debug-OTP-Signature': sig },
-        }),
-      ),
-    );
-  }
-
-  /** Verifies the 6-digit code and, on success, kicks off the async
-   *  `sign` Lambda. Response returns `stage='signing'`; the SPA must
-   *  then poll `get()` until `stage='signed'` (or a terminal). */
-  verifyOtp(signId: string, code: string): Observable<VerifyOtpResponse> {
-    return this.http.post<VerifyOtpResponse>(
-      `${this.base}/signatures/${signId}/otp/verify`,
-      { code },
     );
   }
 }

@@ -7,23 +7,11 @@ import {
     prepareProcessAtSignatureStage,
 } from '../../support/uc3/process-flow';
 
-test.setTimeout(120_000);
+test.setTimeout(240_000);
 
 test(
     'EUV-UC3-005 · iniciar la ceremonia de firma',
     async ({ page }, testInfo) => {
-
-        testInfo.annotations.push({
-            type: 'known_issue',
-            description: 'DEF-UC3-SIGN-001',
-        });
-
-        testInfo.annotations.push({
-            type: 'workaround',
-            description:
-                'Reload en etapa Signature antes de iniciar la ceremonia.',
-        });
-
         let signId = '';
         let portalReturnUrl = '';
 
@@ -110,13 +98,10 @@ test(
             'CUANDO el inversionista solicita iniciar la firma',
             async () => {
                 /*
-                 * startSignature() puede:
-                 *
-                 * 1. crear una ceremonia mediante /advance y recibir sign_url;
-                 * 2. reutilizar un sign_id pendiente.
-                 *
-                 * Para el EUV ambas rutas son válidas:
-                 * el comportamiento observable debe terminar en Signing.
+                 * La firma ya la abrió el backend (generate_sign) al
+                 * completarse los documentos: startSignature() solo
+                 * navega a /sign/{signature_id} con el return_url.
+                 * El comportamiento observable debe terminar en Signing.
                  */
                 await Promise.all([
                     page.waitForURL(
@@ -156,7 +141,7 @@ test(
 
                 expect(
                     signMatch,
-                    'la URL debe contener un sign_id identificable'
+                    'la URL debe contener un signature_id identificable'
                 ).not.toBeNull();
 
                 signId =

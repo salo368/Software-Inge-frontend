@@ -104,7 +104,14 @@ export class SimulatorComponent implements OnInit {
       },
       error: (err) => {
         this.loading.set(false);
-        this.error.set(err?.error?.error || 'No se pudo simular. Intenta de nuevo.');
+        const code = err?.error?.error;
+        this.error.set(
+          code === 'invalid_amount'
+            ? 'Ingresa un monto mayor a cero.'
+            : code === 'invalid_term'
+              ? 'Elige un plazo valido.'
+              : 'No se pudo simular. Intenta de nuevo.',
+        );
       },
     });
   }
@@ -119,8 +126,7 @@ export class SimulatorComponent implements OnInit {
     const intent: PendingCdtIntent = {
       bank_id: row.bank.id,
       amount: this.amount(),
-      term_days: this.term(),
-      rate: row.rate,
+      term: this.term(),
     };
     if (!this.auth.isAuthenticated()) {
       localStorage.setItem(PENDING_CDT_KEY, JSON.stringify(intent));
@@ -130,13 +136,17 @@ export class SimulatorComponent implements OnInit {
     if (this.openingId() !== null) return;
     this.openingId.set(row.bank.id);
     this.processesApi.create(intent).subscribe({
-      next: (r) => {
+      next: (p) => {
         this.openingId.set(null);
-        window.location.assign(blockUrl('portal', `process/${r.process.id}`));
+        window.location.assign(blockUrl('portal', `process/${p.id}`));
       },
-      error: () => {
+      error: (err) => {
         this.openingId.set(null);
-        this.error.set('No pudimos abrir el CDT. Intenta de nuevo.');
+        this.error.set(
+          err?.error?.error === 'Bank not available for the given amount and term'
+            ? 'Esta entidad ya no ofrece ese monto y plazo. Simula de nuevo.'
+            : 'No pudimos abrir el CDT. Intenta de nuevo.',
+        );
       },
     });
   }
