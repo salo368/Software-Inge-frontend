@@ -215,7 +215,7 @@
         <label for="process-form-email" class="form-label small fw-semibold">Correo</label>
         <input id="process-form-email" formControlName="email" type="email" autocomplete="email" class="form-control" [class.is-invalid]="invalid('email')" />
       </div>
-      <div class="col-6 col-md-3 col-lg-2">
+      <div class="col-5 col-md-3 col-lg-2">
         <label for="process-form-phone-ext" class="form-label small fw-semibold">Indicativo</label>
         <app-combo-field
           inputId="process-form-phone-ext"
@@ -227,7 +227,7 @@
           panelMinWidth="min(21rem, 86vw)"
         />
       </div>
-      <div class="col-6 col-md-3 col-lg-4">
+      <div class="col-7 col-md-3 col-lg-4">
         <label for="process-form-phone" class="form-label small fw-semibold">Celular</label>
         <input id="process-form-phone" formControlName="phone_number" inputmode="tel" autocomplete="tel-national" class="form-control" placeholder="3000000000" [class.is-invalid]="invalid('phone_number')" />
       </div>

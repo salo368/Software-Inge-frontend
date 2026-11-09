@@ -15,7 +15,8 @@ import { ALLOWED_FILE_CONTENT_TYPES, FilesService } from '@shared/core/files.ser
 import { ProcessesService, RequiredFileType, RequiredFiles } from '@shared/core/processes.service';
 
 const POLL_MS = 2000;
-const MAX_POLL = 20;
+/** How long a file that already reached S3 may take to be registered. */
+const REGISTER_TIMEOUT_MS = 40_000;
 const MAX_BYTES = 10 * 1024 * 1024;
 
 interface DocDef {
@@ -81,7 +82,12 @@ export class ProcessDocumentsComponent implements OnInit, OnDestroy {
   private filesApi = inject(FilesService);
   private processesApi = inject(ProcessesService);
   private pollTimer: number | null = null;
-  private attempts = 0;
+  /**
+   * Per document type: when to give up waiting for the backend to register
+   * a file that ALREADY reached S3. Each upload is independent (own PUT, own
+   * deadline); a single poll loop serves all of them while any is pending.
+   */
+  private deadlines = new Map<RequiredFileType, number>();
 
   readonly ACCEPT = ALLOWED_FILE_CONTENT_TYPES.join(',');
 
@@ -127,14 +133,17 @@ export class ProcessDocumentsComponent implements OnInit, OnDestroy {
       return {
         ...d,
         uploaded,
-        uploading: uploaded ? false : (p?.uploading ?? false),
+        // A file still travelling to S3 (no deadline yet) stays "uploading" even if
+        // the type was already registered by a previous upload (replacement).
+        uploading: p?.uploading ? !(uploaded && this.deadlines.has(d.type)) : false,
         fileName: p?.fileName ?? null,
-        error: uploaded ? null : (p?.error ?? null),
+        error: p?.uploading ? null : (uploaded ? null : (p?.error ?? null)),
       };
     });
+    for (const r of next) if (!r.uploading) this.deadlines.delete(r.type);
     const wasComplete = this.complete();
     this.rows.set(next);
-    if (!this.anyUploading()) this.clearTimer();
+    if (this.deadlines.size === 0) this.clearTimer();
     if (this.complete() !== wasComplete) this.completeChange.emit(this.complete());
   }
 
@@ -161,7 +170,10 @@ export class ProcessDocumentsComponent implements OnInit, OnDestroy {
 
     this.patch(type, { uploading: true, error: null, fileName: file.name });
     this.filesApi.upload(this.processId, type, file).subscribe({
-      next: () => this.startPolling(),
+      next: () => {
+        this.deadlines.set(type, Date.now() + REGISTER_TIMEOUT_MS);
+        this.startPolling();
+      },
       error: () =>
         this.patch(type, {
           uploading: false,
@@ -175,27 +187,28 @@ export class ProcessDocumentsComponent implements OnInit, OnDestroy {
   }
 
   private startPolling(): void {
-    this.attempts = 0;
     if (this.pollTimer !== null) return;
     this.pollTimer = window.setInterval(() => {
-      this.attempts += 1;
-      if (this.attempts > MAX_POLL) {
+      this.expireStale();
+      if (this.deadlines.size === 0) {
         this.clearTimer();
-        this.rows.update((rows) =>
-          rows.map((r) =>
-            r.uploading
-              ? {
-                  ...r,
-                  uploading: false,
-                  error: 'El archivo se subio pero tarda en registrarse. Recarga la pagina en unos segundos.',
-                }
-              : r,
-          ),
-        );
         return;
       }
       this.refresh();
     }, POLL_MS);
+  }
+
+  /** Gives up, per document, on files that reached S3 but never got registered. */
+  private expireStale(): void {
+    const now = Date.now();
+    for (const [type, deadline] of this.deadlines) {
+      if (now < deadline) continue;
+      this.deadlines.delete(type);
+      this.patch(type, {
+        uploading: false,
+        error: 'El archivo se subio pero tarda en registrarse. Recarga la pagina en unos segundos.',
+      });
+    }
   }
 
   private clearTimer(): void {
