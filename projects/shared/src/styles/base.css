@@ -42,6 +42,14 @@ app-root {
   flex-direction: column;
 }
 
+/* <app-layout> sits between app-root and navbar/main/footer: it has to grow
+   and be a column too, or `main`'s flex-grow never reaches the footer. */
+app-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+}
+
 h1, h2, h3, h4, h5, h6,
 .display-1, .display-2, .display-3, .display-4, .display-5, .display-6 {
   letter-spacing: -0.035em;
@@ -310,6 +318,42 @@ h1, h2, h3, h4, h5, h6,
   box-shadow: 0 2px 10px rgba(23, 20, 58, 0.14);
 }
 
+/* Free-term field that sits at the end of the segmented control. */
+.seg-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.6rem;
+  border: 1.5px dashed #c4b5fd;
+  color: #6b7280;
+  font-weight: 600;
+  font-size: 0.925rem;
+  cursor: text;
+  transition: all 0.16s ease;
+}
+.seg-custom input {
+  width: 4.2rem;
+  border: 0;
+  background: transparent;
+  text-align: center;
+  font-weight: 700;
+  color: var(--ink);
+  padding: 0.3rem 0;
+  outline: none;
+  -moz-appearance: textfield;
+}
+.seg-custom input::-webkit-outer-spin-button,
+.seg-custom input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.seg-custom input::placeholder { color: #9ca3af; font-weight: 600; }
+.seg-custom:focus-within { border-color: var(--brand); }
+.seg-custom.active {
+  background: #fff;
+  border: 1.5px solid transparent;
+  color: var(--brand-dark);
+  box-shadow: 0 2px 10px rgba(23, 20, 58, 0.14);
+}
+
 /* ---------- Result cards ---------- */
 .bank-card {
   animation: revealUp 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -478,6 +522,15 @@ h1, h2, h3, h4, h5, h6,
   margin-top: 21px;
 }
 .step-line.done { background: #a7f3d0; }
+
+/* Phones: 5 steps of 72px each do not fit in ~358px and cause horizontal scroll. */
+@media (max-width: 575.98px) {
+  .stepper { gap: 0.25rem; }
+  .step { min-width: 0; flex: 0 0 auto; gap: 0.3rem; }
+  .step-dot { width: 36px; height: 36px; font-size: 0.95rem; }
+  .step-label { font-size: 0.66rem; }
+  .step-line { min-width: 8px; margin-top: 17px; }
+}
 
 /* ---------- Upload boxes (documents / payment method) ---------- */
 .upload-box {

@@ -5,6 +5,7 @@ import { Router, RouterLink } from '@angular/router';
 import { AnimatedMoneyComponent } from '@shared/components/animated-money.component';
 import { AuthService } from '@shared/core/auth.service';
 import { BanksService, Bank } from '@shared/core/banks.service';
+import { blockUrl } from '@shared/core/blocks';
 import { formatCOP } from '@shared/core/format';
 import {
   ProcessRow,
@@ -51,6 +52,8 @@ export class HomeComponent implements OnInit {
   private banksApi = inject(BanksService);
 
   readonly formatCOP = formatCOP;
+  /** The simulator is another block: a document navigation, not an Angular route. */
+  readonly simulatorUrl = blockUrl('simulator');
   readonly stageLabel = STAGE_LABEL;
   readonly stageClass = STAGE_CLASS;
   readonly user = this.auth.user;

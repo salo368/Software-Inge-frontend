@@ -5,7 +5,7 @@
       Aqui puedes retomar cada proceso donde lo dejaste y abrir nuevos CDTs cuando quieras.
     </p>
   </div>
-  <a routerLink="/" class="btn btn-primary">
+  <a id="portal-new-simulation" [href]="simulatorUrl" class="btn btn-primary">
     <i class="bi bi-plus-lg me-1"></i>Simular un nuevo CDT
   </a>
 </div>
@@ -23,7 +23,7 @@
     <p class="text-body-secondary mb-4" style="max-width: 26rem; margin-inline: auto">
       Compara tasas en el simulador y elige la entidad que mas te convenga.
     </p>
-    <a routerLink="/" class="btn btn-primary px-4">Ir al simulador</a>
+    <a id="portal-go-simulator" [href]="simulatorUrl" class="btn btn-primary px-4">Ir al simulador</a>
   </div>
 
   <div id="portal-process-list" class="row g-3" *ngIf="rows().length > 0">

@@ -39,7 +39,7 @@
   </div>
 
   <!-- Body card -->
-  <div class="card shadow-sm mx-auto" style="max-width: 720px">
+  <div id="process-card" class="card shadow-sm mx-auto process-card" [class.process-card-wide]="wideCard()">
     <div class="card-body p-4 p-lg-5">
       <!-- ============================== FORM ============================== -->
       <ng-container *ngIf="stage() === 'FORM'">

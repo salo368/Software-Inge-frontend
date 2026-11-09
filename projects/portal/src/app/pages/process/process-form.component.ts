@@ -16,6 +16,17 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { forkJoin } from 'rxjs';
 
 import { AuthService } from '@shared/core/auth.service';
+import { ComboFieldComponent } from '@shared/components/combo-field.component';
+import { DateFieldComponent } from '@shared/components/date-field.component';
+import {
+  DEFAULT_DIAL_COUNTRY,
+  DialOption,
+  buildDialOptions,
+  countryForDial,
+  dialOf,
+} from '@shared/core/dial-codes';
+import { isoYearsAgo, todayIso } from '@shared/core/date-input';
+import { MoneyInputDirective } from '@shared/core/money-input.directive';
 import {
   CIVIL_STATUS_LABEL,
   COLOMBIA,
@@ -81,7 +92,7 @@ function enumOptions<K extends string>(labels: Record<K, string>): { key: K; lab
 @Component({
   selector: 'app-process-form',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, ReactiveFormsModule, MoneyInputDirective, DateFieldComponent, ComboFieldComponent],
   templateUrl: './process-form.component.html',
 })
 export class ProcessFormComponent implements OnInit {
@@ -99,7 +110,14 @@ export class ProcessFormComponent implements OnInit {
   readonly CIVIL_STATUSES = enumOptions<CivilStatus>(CIVIL_STATUS_LABEL);
   readonly EDUCATION_LEVELS = enumOptions<EducationLevel>(EDUCATION_LEVEL_LABEL);
   readonly COLOMBIA = COLOMBIA;
-  readonly today = new Date().toISOString().slice(0, 10);
+  /** Local calendar day: `toISOString()` is UTC, which is already tomorrow after 7 pm in Colombia. */
+  readonly today = todayIso();
+  readonly MIN_DATE = '1900-01-01';
+  /** Listed first while nothing is typed in a country search. */
+  readonly PINNED_COUNTRIES = [COLOMBIA];
+  readonly DIAL_PINNED = [DEFAULT_DIAL_COUNTRY];
+  /** The birth-date calendar opens around an adult age instead of this month. */
+  readonly birthStartView = isoYearsAgo(30);
 
   loading = signal(true);
   saving = signal(false);
@@ -107,6 +125,8 @@ export class ProcessFormComponent implements OnInit {
   prefilled = signal(false);
 
   countries = signal<Option[]>([]);
+  /** Country + flag + dial code, built from the same catalog as `countries`. */
+  dialOptions = signal<DialOption[]>([]);
   private colombia = signal<ColombianCatalog | null>(null);
   readonly departments = computed(() => toOptions(this.colombia() ?? {}));
 
@@ -141,7 +161,9 @@ export class ProcessFormComponent implements OnInit {
     document_issuance_country: [COLOMBIA, [Validators.required]],
     document_issuance_department: ['', [Validators.required]],
     document_issuance_city: ['', [Validators.required]],
-    phone_ext: ['57', [Validators.required, Validators.pattern(/^\d{1,4}$/)]],
+    // UI only: the dial code is shared between countries (+1, +7), so the control keeps
+    // the country (unique) and `phone_ext` is derived from it when sending.
+    phone_country: [DEFAULT_DIAL_COUNTRY, [Validators.required]],
     phone_number: ['', [Validators.required, Validators.pattern(/^\d{7,15}$/)]],
     civil_status: ['' as CivilStatus | '', [Validators.required]],
     education_level: ['' as EducationLevel | '', [Validators.required]],
@@ -163,6 +185,7 @@ export class ProcessFormComponent implements OnInit {
     }).subscribe({
       next: ({ mine, countries, colombia }) => {
         this.countries.set(toOptions(countries));
+        this.dialOptions.set(buildDialOptions(countries));
         this.colombia.set(colombia);
         if (mine.form) {
           this.patchFromApi(mine.form);
@@ -226,7 +249,7 @@ export class ProcessFormComponent implements OnInit {
         document_type: f.document_type,
         document_number: String(f.document_number),
         document_issuance_date: fromApiDate(f.document_issuance_date),
-        phone_ext: f.phone_ext,
+        phone_country: countryForDial(f.phone_ext),
         phone_number: f.phone_number,
         civil_status: f.civil_status,
         education_level: f.education_level,
@@ -267,9 +290,10 @@ export class ProcessFormComponent implements OnInit {
   }
 
   private toPayload(): UserFormInput {
-    const v = this.form.getRawValue();
+    const { phone_country, ...v } = this.form.getRawValue();
     const payload: UserFormInput = {
       ...v,
+      phone_ext: dialOf(phone_country),
       name: v.name.trim(),
       last_name: v.last_name.trim(),
       gender: v.gender as Gender,

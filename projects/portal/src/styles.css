@@ -1,1 +1,88 @@
 @import '../../shared/src/styles/base.css';
+/* Flags for the dial-code select (generated; see scripts/generate-flags-css.js). */
+@import '../../shared/src/styles/flags.css';
+
+/* Process wizard card: narrow for reading steps, wide for the KYC form. */
+.process-card {
+  max-width: 720px;
+  transition: max-width 0.25s ease;
+}
+.process-card-wide {
+  max-width: 1120px;
+}
+
+/* KYC form: each block is its own panel so the sections read as separate.
+   Contrast (WCAG 1.4.11 asks >= 3:1 for the edge of a control):
+   field border #8b82bd = 3.0:1 on the panel and 3.5:1 on white;
+   panel #f1edfc + #c4b8ee border + brand stripe stand out from the white card. */
+.form-section {
+  background: #f1edfc;
+  border: 1px solid #c4b8ee;
+  border-left: 4px solid var(--brand);
+  border-radius: 1rem;
+  padding: 1.25rem 1.35rem 1.4rem;
+  margin-bottom: 1.15rem;
+}
+.form-section .form-label { color: #2d2a4a; }
+.form-section .form-control,
+.form-section .form-select,
+.form-section .input-group-text {
+  background-color: #fff;
+  border-color: #8b82bd;
+}
+.form-section .input-group-text { color: #4c1d95; background-color: #ede9fe; }
+.form-section .form-control::placeholder { color: #6b6a86; opacity: 1; }
+.form-section .form-control:focus,
+.form-section .form-select:focus {
+  border-color: var(--brand-dark);
+  box-shadow: 0 0 0 0.2rem rgba(124, 58, 237, 0.28);
+}
+.form-section .form-control.is-invalid,
+.form-section .form-select.is-invalid { border-color: #dc3545; }
+.form-section .form-check-input { border-color: #8b82bd; }
+.form-section .form-check-input:checked { background-color: var(--brand-dark); border-color: var(--brand-dark); }
+.form-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0 0 1.1rem;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.form-section-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.65rem;
+  background: #ddd6fe;
+  color: #5b21b6;
+  font-size: 1rem;
+}
+/* Second group inside a panel (issuance place, declarations). */
+.form-subsection-title {
+  margin: 1.3rem 0 0.75rem;
+  padding-top: 1rem;
+  border-top: 1px dashed #a79bdc;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5b5978;
+}
+@media (max-width: 575.98px) {
+  .form-section { padding: 1rem 1rem 1.15rem; }
+}
+
+/* One height and one text weight for every control in the form (text, money,
+   dates, searchable and short selects, dial code), so a row never looks uneven.
+   2.75rem = 44px, a comfortable touch target. */
+.form-section .form-control,
+.form-section .form-select,
+.form-section .combo-input {
+  height: 2.75rem;
+  font-weight: 500;
+}
+.form-section .form-control::placeholder { font-weight: 400; }

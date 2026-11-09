@@ -1,5 +1,10 @@
 import { expect, type Page } from '@playwright/test';
 
+import {
+    pickFixedOption,
+    pickSearchOption,
+} from './form-controls';
+
 export const DEFAULT_UC3_AMOUNT = '89000000';
 export const DEFAULT_UC3_TERM_DAYS = 540;
 
@@ -55,7 +60,10 @@ export interface ProcessFormData {
     documentIssuanceDepartment: string;
     documentIssuanceCity: string;
     email: string;
-    phoneExt: string;
+    /** País del indicativo (ISO 3166-1 alfa-2), p. ej. `CO`. El campo es un selector con banderas. */
+    phoneCountry: string;
+    /** Indicativo de ese país, sin `+`: es lo que se escribe para buscarlo y lo que el back recibe. */
+    phoneDial: string;
     phoneNumber: string;
     monthlyIncome: string;
     monthlyExpenses: string;
@@ -452,7 +460,8 @@ export function buildSyntheticProcessFormData(): ProcessFormData {
             process.env.SIGNATURES_TEST_EMAIL ??
             process.env.TEST_USER_EMAIL ??
             'parex@example.com',
-        phoneExt: '57',
+        phoneCountry: 'CO',
+        phoneDial: '57',
         phoneNumber: '3001234567',
         monthlyIncome: '12000000',
         monthlyExpenses: '5000000',
@@ -472,8 +481,13 @@ export function buildSyntheticProcessFormData(): ProcessFormData {
  *
  * El usuario PAREX puede traer un formulario de una corrida anterior
  * (el formulario es uno por usuario), así que se sobrescribe todo.
- * Los selects en cascada se llenan en orden país -> departamento ->
+ * Los selectores en cascada se llenan en orden país -> departamento ->
  * ciudad: cambiar el padre limpia a los hijos.
+ *
+ * Los selectores son controles propios (no `<select>` nativos): ver
+ * `form-controls.ts`. Las fechas aceptan el formato ISO (`1999-11-02`),
+ * que el campo convierte a `dd/mm/aaaa`; los montos aceptan solo dígitos
+ * y el campo les pone los puntos de miles.
  */
 export async function fillProcessFormFields(
     page: Page,
@@ -487,36 +501,44 @@ export async function fillProcessFormFields(
     const fill = (id: string, value: string) =>
         page.locator(`#${id}`).fill(value);
 
-    const select = (id: string, value: string) =>
-        page.locator(`#${id}`).selectOption(value);
+    const fixed = (id: string, key: string) =>
+        pickFixedOption(page, id, key);
+
+    const search = (id: string, key: string) =>
+        pickSearchOption(page, id, key);
 
     // Información personal
     await fill('process-form-name', data.name);
     await fill('process-form-second-name', data.secondName);
     await fill('process-form-last-name', data.lastName);
     await fill('process-form-second-last-name', data.secondLastName);
-    await select('process-form-gender', data.gender);
+    await fixed('process-form-gender', data.gender);
     await fill('process-form-birth-date', data.birthDate);
-    await select('process-form-nationality', data.nationality);
-    await select('process-form-civil-status', data.civilStatus);
-    await select('process-form-education-level', data.educationLevel);
+    await search('process-form-nationality', data.nationality);
+    await fixed('process-form-civil-status', data.civilStatus);
+    await fixed('process-form-education-level', data.educationLevel);
 
     // Lugar de nacimiento
-    await select('process-form-birth-country', data.birthCountry);
-    await select('process-form-birth-department', data.birthDepartment);
-    await select('process-form-birth-city', data.birthCity);
+    await search('process-form-birth-country', data.birthCountry);
+    await search('process-form-birth-department', data.birthDepartment);
+    await search('process-form-birth-city', data.birthCity);
 
     // Documento
-    await select('process-form-document-type', data.documentType);
+    await fixed('process-form-document-type', data.documentType);
     await fill('process-form-document-number', data.documentNumber);
     await fill('process-form-document-issuance-date', data.documentIssuanceDate);
-    await select('process-form-document-issuance-country', data.documentIssuanceCountry);
-    await select('process-form-document-issuance-department', data.documentIssuanceDepartment);
-    await select('process-form-document-issuance-city', data.documentIssuanceCity);
+    await search('process-form-document-issuance-country', data.documentIssuanceCountry);
+    await search('process-form-document-issuance-department', data.documentIssuanceDepartment);
+    await search('process-form-document-issuance-city', data.documentIssuanceCity);
 
     // Contacto
     await fill('process-form-email', data.email);
-    await fill('process-form-phone-ext', data.phoneExt);
+    await pickSearchOption(
+        page,
+        'process-form-phone-ext',
+        data.phoneCountry,
+        `+${data.phoneDial}`
+    );
     await fill('process-form-phone', data.phoneNumber);
 
     // Perfil financiero
