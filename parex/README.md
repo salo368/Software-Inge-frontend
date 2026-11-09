@@ -17,7 +17,7 @@ distintos, no uno reemplaza al otro:
 | Alcance | Un bloque a la vez | Los tres bloques, un recorrido completo |
 | Dónde vive la suite | `projects/<bloque>/e2e/` (por bloque) | `parex/` (a nivel de repo) |
 | Cuándo corre | Dentro de la matriz, por cada bloque desplegado | Una sola vez, después de que los tres bloques y la infraestructura ya desplegaron |
-| Estado hoy | Sin activar en ningún bloque (ningún `projects/<bloque>/e2e/` existe todavía) | Activo, con specs reales (`EUV-UC2/3`, `VAL-AUTH`, `VAL-REG`) |
+| Estado hoy | Sin activar en ningún bloque (ningún `projects/<bloque>/e2e/` existe todavía) | Activo, con specs reales (`EUV-UC2/3`, `VAL-AUTH`, `VAL-REG`, `VAL-SIM`, `VAL-FORM`) |
 
 La razón de fondo es la misma que ya explica `e2e/` (ver más abajo): un
 recorrido como "registrarse en simulator, avanzar en portal, firmar en
@@ -48,7 +48,10 @@ parex/
     validation/
       auth/VAL-AUTH-*        # Validaciones negativas/positivas de autenticación
       register/VAL-REG-*     # Validaciones de registro
+      simulator/VAL-SIM-*    # Simulador: monto, plazo propio, sin cobertura (públicos)
+      form/VAL-FORM-*        # Formulario KYC: buscadores, selectores, fechas, montos, indicativo, envío
     support/                 # Helpers de flujo reutilizados entre specs (uc3/, signing/)
+      uc3/form-controls.ts   # Cómo se manejan los selectores propios del formulario
     fixtures/signing/        # Imágenes de prueba para la ceremonia de firma
 ```
 
@@ -70,12 +73,60 @@ TEST_ENV=dev npm run parex:e2e
 npm run parex:e2e:report
 ```
 
+### Contra el front local (antes de desplegar)
+
+`PAREX_BASE_URL` reemplaza la URL de CloudFront del ambiente. Sirve para probar
+un cambio del front sin desplegarlo; el back y los datos siguen siendo los de
+`TEST_ENV`. Se necesita el front local detrás del proxy que imita a CloudFront
+(un solo origen para simulador, portal y firma):
+
+```bash
+npx ng serve simulator --configuration staging --port 4200   # cada uno en su terminal
+npx ng serve portal    --configuration staging --port 4201
+npx ng serve signing   --configuration staging --port 4202
+npm run start:proxy                                          # http://localhost:4300
+
+TEST_ENV=staging PAREX_BASE_URL=http://localhost:4300 \
+  TEST_USER_EMAIL=... TEST_USER_PASSWORD=... npm run parex:e2e
+```
+
 Variables de entorno esperadas (ver `deploy-dev.yml`, job `parex`, para la
 lista completa tal como la usa CI): `TEST_USER_EMAIL`, `TEST_USER_PASSWORD`,
 opcionalmente `SIGNATURES_TEST_FACE_PATH` para la validación biométrica y
 `SIGNATURES_TEST_EMAIL` para el correo del firmante (por defecto
 `TEST_USER_EMAIL`). Localmente se pueden definir en
 `parex/.env.{dev,staging,pro}.local` (no se commitean).
+
+## Validaciones del simulador y del formulario
+
+Cubren los controles propios que reemplazaron a los nativos del navegador
+(`<select>`, `<input type="date">`, `<input type="number">`):
+
+| Spec | Qué valida | Sesión |
+|---|---|---|
+| `VAL-SIM-001` | Monto: sin ceros a la izquierda, puntos de miles, solo números, tope de dígitos; la simulación recibe el número limpio | no |
+| `VAL-SIM-002` | Plazo propio en días además de los fijos; el resumen no cambia de plazo sin volver a simular | no |
+| `VAL-SIM-003` | Sin datos del mercado el resumen muestra guiones (no `0.00 %`) y avisa cuando ninguna entidad cubre lo pedido | no |
+| `VAL-FORM-001` | Buscadores de listas largas: orden por relevancia, sin tildes, panel acotado, cascada país -> departamento -> ciudad | sí |
+| `VAL-FORM-002` | Selectores cortos: lista con un clic, teclado, obligatoriedad | sí |
+| `VAL-FORM-003` | Fechas: máscara `dd/mm/aaaa`, errores, calendario con mes y año, días futuros bloqueados | sí |
+| `VAL-FORM-004` | Montos: puntos de miles, ceros, el cero es válido y el vacío no, Backspace sobre un punto | sí |
+| `VAL-FORM-005` | Indicativo: bandera real, búsqueda por país o número, código compartido (+1) | sí |
+| `VAL-FORM-006` | Lo que recibe el back (claves, fechas ISO, números, indicativo sin `+`) y cómo se vuelve a mostrar | sí |
+
+### Cómo se manejan los selectores propios
+
+El formulario ya no tiene `<select>` nativos: `selectOption` no funciona. Los
+ids de los campos son los de siempre (`process-form-*`) y cada lista es
+`#<id>-list`. Las opciones se eligen por su **clave** (`data-key`), no por la
+etiqueta ni por la posición, con las ayudas de
+[`support/uc3/form-controls.ts`](tests/support/uc3/form-controls.ts):
+
+- `pickFixedOption(page, id, key)`: selector corto (`SINGLE`, `CC`...).
+- `pickSearchOption(page, id, key, search?)`: escribe para filtrar y elige esa clave
+  (`QUINDIO`, `ARMENIA`, o `CO` con `search` = `+57` para el indicativo).
+- Las fechas aceptan `fill('1999-11-02')` (se muestran `02/11/1999`) y los montos
+  `fill('12000000')` (se muestran `12.000.000`).
 
 ## Flujo que valida UC3 (contrato actual del backend)
 

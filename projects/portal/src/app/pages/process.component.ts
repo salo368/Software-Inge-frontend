@@ -123,6 +123,10 @@ export class ProcessComponent implements OnInit, OnDestroy {
 
   readonly stage = computed<ProcessStage>(() => this.process()?.stage ?? 'FORM');
   readonly isFinal = computed(() => FINAL_STAGES.includes(this.stage()));
+  /** The KYC form needs room (4 columns on desktop); every other step reads better narrow. */
+  readonly wideCard = computed(
+    () => this.stage() === 'FORM' || (this.stage() === 'DOCUMENTS' && this.editingForm()),
+  );
   readonly stageIndex = computed(() => {
     const s = this.stage();
     if (s === 'SENT_TO_BANK' || s === 'COMPLETED') return STEPS.length;
