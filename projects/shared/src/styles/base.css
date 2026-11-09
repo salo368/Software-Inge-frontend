@@ -354,6 +354,30 @@ h1, h2, h3, h4, h5, h6,
   box-shadow: 0 2px 10px rgba(23, 20, 58, 0.14);
 }
 
+/* ---------- Simulator on phones ----------
+   No hero/controls overlap (the white card used to bleed over the rounded
+   hero), a compact hero, and the terms as an even grid with the free-term
+   field on its own full row. */
+@media (max-width: 575.98px) {
+  .hero-dark {
+    padding: 1.25rem 1rem 1.25rem;
+    border-radius: 1.25rem;
+  }
+  .hero-dark h1 { font-size: 2rem; line-height: 1.12; }
+  .hero-dark .hero-eyebrow { font-size: 0.78rem; padding: 0.35rem 0.8rem; }
+  .hero-dark + .card { margin-top: 0.75rem !important; margin-inline: 0 !important; }
+  .hero-dark + .card > .card-body { padding: 1rem !important; }
+  .trust-chip { font-size: 0.78rem; padding: 0.4rem 0.75rem; }
+  .controls-row .segmented {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+  }
+  .controls-row .seg-item { padding: 0.65rem 0.25rem; text-align: center; }
+  .controls-row .seg-custom { grid-column: 1 / -1; justify-content: center; padding: 0.4rem 0.75rem; }
+  .controls-row .seg-custom input { width: 5rem; }
+}
+
 /* ---------- Result cards ---------- */
 .bank-card {
   animation: revealUp 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;

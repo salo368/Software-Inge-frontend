@@ -41,7 +41,6 @@ import {
   Component,
   OnDestroy,
   OnInit,
-  ViewChild,
   computed,
   inject,
   signal,
@@ -160,7 +159,6 @@ export class SignComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private api = inject(SignaturesService);
 
-  @ViewChild(CameraCaptureComponent) camera?: CameraCaptureComponent;
 
   readonly STEPS = STEPS;
   readonly DOCS = DOCS;
@@ -198,6 +196,8 @@ export class SignComponent implements OnInit, OnDestroy {
   uploadBusy = signal(false);
   /** Reason of the last rejected evidence (`too_few_legible_lines`...). */
   lastRejection = signal('');
+  /** Why the last photo did not pass. While set, the identity screen shows it INSTEAD of the camera. */
+  identityError = signal('');
 
   // form
   email = '';
@@ -469,6 +469,7 @@ export class SignComponent implements OnInit, OnDestroy {
   pickDoc(type: BiometricType): void {
     if (this.uploadBusy() || this.docDone()[type]) return;
     this.currentDoc.set(type);
+    this.identityError.set('');
   }
 
   onCaptured(blob: Blob): void {
@@ -477,6 +478,7 @@ export class SignComponent implements OnInit, OnDestroy {
     const contentType: BiometricContentType = blob.type === 'image/png' ? 'image/png' : 'image/jpeg';
     this.uploadBusy.set(true);
     this.error.set('');
+    this.identityError.set('');
     this.lastRejection.set('');
 
     this.api.uploadBiometric(this.signatureId, type, blob, contentType).subscribe({
@@ -486,8 +488,7 @@ export class SignComponent implements OnInit, OnDestroy {
             if (!r.is_valid) {
               this.uploadBusy.set(false);
               this.lastRejection.set(r.reason);
-              this.error.set(friendlyRejection(r.reason));
-              this.camera?.reset();
+              this.identityError.set(friendlyRejection(r.reason));
               return;
             }
             this.afterBiometricStored();
@@ -498,23 +499,37 @@ export class SignComponent implements OnInit, OnDestroy {
               return;
             }
             this.uploadBusy.set(false);
-            this.camera?.reset();
-            this.handleMutationError(err, () => 'No pudimos validar la foto. Tomala de nuevo con buena luz.');
+            this.failIdentity(err, () => 'No pudimos validar la foto. Tomala de nuevo con buena luz.');
           },
         });
       },
       error: (err: HttpErrorResponse) => {
         this.uploadBusy.set(false);
-        this.handleMutationError(err, () => 'No pudimos subir la foto. Revisa tu conexion.');
+        this.failIdentity(err, () => 'No pudimos subir la foto. Revisa tu conexion.');
       },
     });
+  }
+
+  /** Photo error: shown in place of the camera, which stays off until the user asks to retry. */
+  private failIdentity(err: HttpErrorResponse, fallback: (code: string | undefined) => string): void {
+    this.handleMutationError(err, fallback);
+    const message = this.error();
+    if (message) {
+      this.error.set('');
+      this.identityError.set(message);
+    }
+  }
+
+  /** "Intentar de nuevo": brings the camera back. */
+  retryIdentity(): void {
+    this.identityError.set('');
+    this.lastRejection.set('');
   }
 
   /** Re-read the map (advances to SIGNATURE when complete), then the signature. */
   private afterBiometricStored(): void {
     this.loadBiometrics(() => {
       this.uploadBusy.set(false);
-      this.camera?.reset();
       if (this.allBiometricsDone()) this.refreshNow();
     });
   }
