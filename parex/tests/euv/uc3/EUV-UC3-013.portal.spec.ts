@@ -8,19 +8,23 @@ import {
 } from '../../support/uc3/completion-flow';
 
 import {
-    requireSigningE2EInputs,
+    requireSigningE2EInputsWithOtp,
 } from '../../support/signing/signing-test-env';
 
 test.setTimeout(300_000);
 
+/*
+ * Bloqueado (test.fixme) mientras no exista una fuente automatizable del
+ * OTP: ver OTP_BLOCKED_REASON en support/signing/signing-test-env.ts.
+ *
+ * El último estado alcanzable hoy es REVIEW (pago en revisión):
+ * SENT_TO_BANK y COMPLETED existen en el backend pero sin transición.
+ */
 test(
-    'EUV-UC3-013 · consultar el CDT completado desde Mi cuenta',
+    'EUV-UC3-013 · consultar el CDT pagado desde Mi cuenta',
     async ({ page }, testInfo) => {
-        const {
-            facePath,
-            debugOtpKeyHex,
-        } =
-            requireSigningE2EInputs(
+        const inputs =
+            requireSigningE2EInputsWithOtp(
                 testInfo
             );
 
@@ -28,12 +32,11 @@ test(
             context,
         } =
             await test.step(
-                'PREPARACIÓN · existe un CDT completamente firmado y activado',
+                'PREPARACIÓN · existe un CDT firmado y pagado (en revisión)',
                 async () => {
                     return await prepareProcessAtDoneStage(
                         page,
-                        facePath,
-                        debugOtpKeyHex
+                        inputs
                     );
                 }
             );
@@ -60,7 +63,7 @@ test(
         );
 
         await test.step(
-            'ENTONCES Mi cuenta conserva exactamente la misma adquisición como CDT activo',
+            'ENTONCES Mi cuenta conserva exactamente la misma adquisición con el pago en revisión',
             async () => {
                 await expect(
                     page.locator(
@@ -95,14 +98,14 @@ test(
                     card
                 ).toHaveAttribute(
                     'data-stage',
-                    'done'
+                    'REVIEW'
                 );
 
                 await expect(
                     card
                 ).toHaveAttribute(
                     'data-amount',
-                    context.amount
+                    String(Number(context.amount))
                 );
 
                 await expect(
@@ -117,7 +120,7 @@ test(
                 await expect(
                     card
                 ).toContainText(
-                    'CDT activo'
+                    'Pago en revision'
                 );
             }
         );
@@ -178,7 +181,7 @@ test(
                             termDays:
                                 context.termDays,
                             stage:
-                                'done',
+                                'REVIEW',
                             visibleInAccount:
                                 true,
                         },
