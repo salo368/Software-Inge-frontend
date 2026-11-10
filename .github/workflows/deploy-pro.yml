@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       block:
-        description: "Manual override: empty=auto-detect, __all__=full deploy, or a single block name (simulator, portal, signing)."
+        description: "Manual override: empty=auto-detect, __all__=full deploy, or a single block name (simulator, portal, signing, backoffice)."
         type: string
         default: ''
 
@@ -358,7 +358,6 @@ jobs:
         env:
           TEST_USER_EMAIL: ${{ secrets.PRO_TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.PRO_TEST_USER_PASSWORD }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.PRO_DEBUG_OTP_KEY_HEX }}
           SIGNATURES_TEST_FACE_B64: ${{ secrets.PRO_SIGNATURES_TEST_FACE_B64 }}
         run: |
           set -euo pipefail
@@ -366,7 +365,6 @@ jobs:
           for variable in \
             TEST_USER_EMAIL \
             TEST_USER_PASSWORD \
-            DEBUG_OTP_KEY_HEX \
             SIGNATURES_TEST_FACE_B64
           do
             if [[ -z "${!variable:-}" ]]; then
@@ -401,7 +399,6 @@ jobs:
           TEST_ENV: pro
           TEST_USER_EMAIL: ${{ secrets.PRO_TEST_USER_EMAIL }}
           TEST_USER_PASSWORD: ${{ secrets.PRO_TEST_USER_PASSWORD }}
-          DEBUG_OTP_KEY_HEX: ${{ secrets.PRO_DEBUG_OTP_KEY_HEX }}
         run: npm run parex:e2e
 
       - name: Upload PAREX evidence
