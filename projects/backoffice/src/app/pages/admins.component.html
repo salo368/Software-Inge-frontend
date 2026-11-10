@@ -1,0 +1,130 @@
+<app-shell>
+  <header class="bo-page-header">
+    <div>
+      <h1 class="bo-title">Administradores</h1>
+      <p class="bo-subtitle">Cuentas con acceso a este backoffice.</p>
+    </div>
+  </header>
+
+  <div class="row g-4">
+    <div class="col-12 col-xl-7">
+      <section class="bo-card">
+        <div class="bo-card-header">
+          <h2 class="bo-card-title">Nuevo administrador</h2>
+        </div>
+        <div class="bo-card-body">
+          @if (lastCreated(); as last) {
+            <div id="backoffice-admin-created" class="bo-created mb-4" role="status">
+              <div class="d-flex align-items-start justify-content-between gap-2">
+                <div class="fw-semibold mb-2"><i class="bi bi-check-circle-fill text-success me-1"></i>Cuenta creada para {{ last.admin.full_name }}</div>
+                <button type="button" class="btn-close btn-sm" aria-label="Cerrar" (click)="dismissLast()"></button>
+              </div>
+              <div class="bo-summary-row"><span>Correo</span><strong>{{ last.admin.email }}</strong></div>
+              <div class="bo-summary-row">
+                <span>Contraseña</span>
+                <strong class="d-flex align-items-center gap-2">
+                  <code id="backoffice-admin-created-password">{{ last.password }}</code>
+                  <button id="backoffice-copy-password" type="button" class="btn btn-sm btn-outline-secondary py-0" (click)="copyPassword()">
+                    <i class="bi" [ngClass]="copied() ? 'bi-check2' : 'bi-copy'"></i> {{ copied() ? 'Copiada' : 'Copiar' }}
+                  </button>
+                </strong>
+              </div>
+              <div class="bo-secondary-text mt-2">Compártela por un canal seguro. No se vuelve a mostrar.</div>
+            </div>
+          }
+
+          <form id="backoffice-admin-form" [formGroup]="form" (ngSubmit)="submit()" novalidate>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="backoffice-new-name">Nombre completo</label>
+                <input id="backoffice-new-name" class="form-control" formControlName="full_name" autocomplete="off" />
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label" for="backoffice-new-email">Correo</label>
+                <input id="backoffice-new-email" type="email" class="form-control" formControlName="email" autocomplete="off" />
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="backoffice-new-password">Contraseña</label>
+                <div class="input-group">
+                  <input
+                    id="backoffice-new-password"
+                    [type]="showPassword() ? 'text' : 'password'"
+                    class="form-control"
+                    formControlName="password"
+                    autocomplete="new-password"
+                    aria-describedby="backoffice-password-rules"
+                    style="border-left: 1px solid var(--bo-border-strong); padding-left: 0.75rem"
+                  />
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    (click)="showPassword.set(!showPassword())"
+                    [attr.aria-label]="showPassword() ? 'Ocultar contraseña' : 'Mostrar contraseña'"
+                  >
+                    <i class="bi" [ngClass]="showPassword() ? 'bi-eye-slash' : 'bi-eye'"></i>
+                  </button>
+                  <button id="backoffice-generate-password" type="button" class="btn btn-outline-secondary" (click)="generate()">
+                    Generar
+                  </button>
+                </div>
+                <ul id="backoffice-password-rules" class="bo-rules">
+                  <li [class.ok]="checks().length"><i class="bi" [ngClass]="checks().length ? 'bi-check-circle-fill' : 'bi-circle'"></i>10 caracteres o más</li>
+                  <li [class.ok]="checks().letter"><i class="bi" [ngClass]="checks().letter ? 'bi-check-circle-fill' : 'bi-circle'"></i>Una letra</li>
+                  <li [class.ok]="checks().digit"><i class="bi" [ngClass]="checks().digit ? 'bi-check-circle-fill' : 'bi-circle'"></i>Un número</li>
+                </ul>
+              </div>
+            </div>
+
+            @if (error()) {
+              <div id="backoffice-admin-error" class="alert alert-danger py-2 small mt-3 mb-0" role="alert">{{ error() }}</div>
+            }
+
+            <div class="d-flex justify-content-end mt-4">
+              <button id="backoffice-admin-submit" type="submit" class="btn btn-primary px-4" [disabled]="form.invalid || loading()">
+                @if (loading()) {
+                  <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                {{ loading() ? 'Creando…' : 'Crear administrador' }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-12 col-xl-5">
+      <section class="bo-card mb-4">
+        <div class="bo-card-header">
+          <h2 class="bo-card-title">Creados en esta sesión</h2>
+          <span class="bo-secondary-text tabular">{{ created().length }}</span>
+        </div>
+        @if (created().length === 0) {
+          <div id="backoffice-admin-empty" class="bo-empty py-4">
+            <i class="bi bi-person-plus"></i>
+            <span>Los que crees aparecerán aquí.</span>
+          </div>
+        } @else {
+          <ul id="backoffice-admin-list" class="list-unstyled mb-0">
+            @for (a of created(); track a.id) {
+              <li class="d-flex align-items-center gap-3 px-3 py-2 border-bottom">
+                <span class="bo-avatar" aria-hidden="true">{{ initials(a.full_name) }}</span>
+                <span class="bo-cell-stack">
+                  <span class="bo-primary-text">{{ a.full_name }}</span>
+                  <span class="bo-secondary-text">{{ a.email }}</span>
+                </span>
+              </li>
+            }
+          </ul>
+        }
+      </section>
+
+      <div class="bo-callout">
+        <i class="bi bi-info-circle"></i>
+        <div>
+          El servicio de administradores aún no permite listar, editar ni desactivar cuentas. Cuando el backend lo
+          exponga, esta sección mostrará a todo el equipo.
+        </div>
+      </div>
+    </div>
+  </div>
+</app-shell>
