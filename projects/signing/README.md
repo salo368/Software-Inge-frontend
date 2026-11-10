@@ -6,47 +6,48 @@ bloques (`portal`, `simulator`) bajo la ruta `/sign/`.
 
 ## Alcance
 
-* **Un endpoint humano:** `/sign/:sign_id` — el `sign_id` es la
-  capability token. No hay bearer ni cookie: cualquiera con el link
-  puede llevar la ceremonia hasta el final, por eso el TTL server-side
-  es corto (ver `Signatures.expires_at` en el backend).
-* **Un backend:** el service `signatures` (`v2`). Nunca habla con
-  `processes`, `files`, `auth`, ni ningún otro service — eso es
-  responsabilidad del portal.
+* **Un endpoint humano:** `/sign/:sign_id`, donde el parámetro es el
+  `signature_id` y funciona como capability token. No hay bearer ni
+  cookie: cualquiera con el link puede llevar la firma hasta el final,
+  por eso la ventana server-side es corta (15 min desde `created_at`).
+* **Un backend:** el servicio `signatures` (backend
+  `docs/signatures-api.md`). Nunca habla con `processes`, `files`,
+  `auth` ni ningún otro servicio. La firma la abre el backend
+  (`processes.generate_sign`) cuando los documentos del proceso están
+  completos; el portal solo recibe el `signature_id`.
 * **Dos caminos de entrada:**
-  1. **Email link asíncrono** — el usuario recibe `/sign/{sign_id}` sin
-     `return_url` y firma en otro dispositivo. Al terminar ve un CTA
-     genérico ("podés cerrar esta pestaña").
-  2. **Portal same-tab** — el portal redirige a
-     `/sign/{sign_id}?return_url={encodeURIComponent(process_url)}`
-     y cuando la firma termina la SPA envía al usuario de vuelta.
+  1. **Desde el portal** — redirige a
+     `/sign/{signature_id}?return_url={encodeURIComponent(process_url)}&email=...`;
+     cuando la firma termina la SPA envía al usuario de vuelta.
+  2. **Link suelto** — el mismo `/sign/{signature_id}` sin query params
+     (copiado al celular para usar su cámara, por ejemplo). Al terminar
+     ve un CTA genérico ("podés cerrar esta pestaña").
 
 ## Estado — máquina server-authoritative
 
 La UI **no** decide transiciones: en cada tick (poll de 4s, 2s durante
-`signing`) lee `Ceremony.stage` del backend y computa el screen local.
+`SIGNING`) lee `Signature.stage` del backend y computa el screen local.
 Si dos pestañas están abiertas y una avanza, la otra converge sola.
 
-| `Ceremony.stage` | Screen local | Notas |
+| `Signature.stage` | Screen local | Endpoint que la hace avanzar |
 | --- | --- | --- |
-| `created` | `review` (local) o `identity` | En refresh mid-flow saltamos directo a `identity`. |
-| `identity` | `identity` o `signature` | La SPA parte `identity` en dos screens según el estado de las 4 evidencias. |
-| `consent` | `consent` | Checkbox + `POST /consent`. Encadena `request_otp` en el mismo click. |
-| `otp` | `otp` | 6 dígitos + verify. |
-| `signing` | `signing` | Loading indeterminado; timeout blando a 3 min. |
-| `signed` | `done` | Muestra hash + link a `signed.pdf` presignado (15 min TTL) + CTA de retorno. |
-| `failed` / `expired` | `failed` / `expired` | Terminales. La SPA **no** reintenta desde acá; el reopen se hace desde el portal (`POST /processes/{id}/advance` con la lógica de "reopen"). |
+| `FORM` | `review` (local) y luego `form` | `set-signature-form` (correo + aceptación de términos) |
+| `BIOMETRICS` | `identity` | `upload-biometrics` + `set-biometrics` por evidencia; `get-required-biometrics` avanza cuando las 3 son válidas |
+| `SIGNATURE` | `signature` | `set-signature-draw` (bytes crudos del PNG); la SPA pide el primer OTP enseguida |
+| `OTP` | `otp` | `set-otp` (enviar/reenviar) y `resolve-otp` (6 dígitos, 2 min, 3 intentos) |
+| `SIGNING` | `signing` | `sign_doc` asíncrono (el backend lo falla a los 60 s) |
+| `SIGNED` | `done` | Hash + link a `signed_url` (15 min TTL) + CTA de retorno |
+| `FAILED` | `failed` | Terminal. El backend todavía no reabre firmas. |
+| `410 signature_expired` | `expired` | Terminal: se cerró la ventana de 15 min. |
 
-Ver `pages/sign.component.ts` para la máquina completa y
-`docs/signatures-v2.md §10.4` (en el repo del backend) para el contrato
-con `signatures`.
+Ver `pages/sign.component.ts` para la máquina completa.
 
 ## Módulos internos
 
 ```
 src/app/
 ├── core/
-│   ├── signatures.service.ts      # cliente HTTP v2 (11 endpoints + tipos)
+│   ├── signatures.service.ts      # cliente HTTP (9 endpoints + tipos)
 │   ├── host-app.ts                # validación de ?return_url (same-origin only)
 │   └── e2e-hooks.ts               # window.__signingE2E (E2E-enabled stage + ?e2e=1)
 ├── pages/
@@ -56,17 +57,19 @@ src/app/
 │   └── sign/
 │       ├── camera-capture.component.ts   # <video>+getUserMedia + crop guiado
 │       ├── signature-pad.component.ts    # <canvas> pointer drawing → PNG
-│       └── pdf-preview.component.ts      # pdf.js embed
+│       ├── pdf-preview.component.ts      # pdf.js embed + caja de firma
+│       └── sign-copy.ts                  # textos de error/rechazo
 ├── app.routes.ts
 ├── app.config.ts
 └── environments/
     ├── environment.ts             # dev — signaturesApiUrl único
+    ├── environment.staging.ts     # staging — same shape
     └── environment.pro.ts         # pro — same shape
 ```
 
 `environment.ts` está intencionalmente vacío salvo por
 `signaturesApiUrl`. La SPA no consume ninguna otra API — todo lo demás
-(nombre del firmante, PDF original, etc.) llega vía la ceremony.
+(PDF original, cajas de firma, ventana) llega vía `get-signature`.
 
 ## Descubrir la API URL
 
@@ -91,31 +94,27 @@ El header del archivo repite estas instrucciones.
   con `window.location`. URLs off-origin se descartan silenciosamente.
   Defensa contra `?return_url=https://evil.com/steal` en un email
   interceptado (ver `core/host-app.ts`).
-* **Test hooks** aparecen solo en stages E2E habilitados (`dev`/`pro`) y con `?e2e=1`.
-  Requieren opt-in explícito y credenciales de automatización. Ver `core/e2e-hooks.ts`.
-* **Debug OTP** — la SPA nunca sabe el HMAC key por sí sola. El
-  Playwright driver lo inyecta vía `setDebugOtpKey(hex)` y la SPA lo
-  reenvía al backend en `X-Debug-OTP-Signature`. En pro el key no
-  existe en SSM y el backend ignora el header.
+* **Test hooks** aparecen solo en stages E2E habilitados (`dev`/`staging`/`pro`)
+  y con `?e2e=1`. No dan ninguna capacidad extra: el OTP sigue llegando
+  solo al correo del firmante. Ver `core/e2e-hooks.ts`.
 
 ## Desarrollo local
 
 ```bash
 # desde la raíz del repo
 npm install
-npm run start:signing        # ng serve signing → http://localhost:4200
+npx ng serve signing --configuration staging   # http://localhost:4202/sign/
 ```
 
-El dev server sirve `/`, pero la SPA espera vivir bajo `/sign/`. Para
-un smoke test navegar a `http://localhost:4200/sign/<algún-sign_id-válido>`
-(hay que abrir la ceremony contra el backend real primero — el bootstrap
-lo hace `scripts/e2e-signature.py` en el repo del backend).
+Para un smoke test navegar a
+`http://localhost:4202/sign/<signature_id>?email=<correo>`. El
+`signature_id` sale de un proceso en `SIGNATURE` (`GET
+/processes/get-processes`); la firma vive 15 minutos.
 
 ## Tests
 
-* **Unit** — `ng test` (Karma + Jasmine). Cubre `signatures.service`,
-  `host-app`, `e2e-hooks`.
-* **E2E Playwright** — ver `e2e/README.md` en la raíz del repo.
-  Dos specs: `signing-standalone` y `portal-to-payment`. Corren solo
-  en dispatch manual del workflow `e2e.yml` (no en el critical path
-  del deploy).
+* **Unit** — `npx ng test signing` (Karma + Jasmine). Cubre
+  `signatures.service`, `host-app` y los textos de rechazo.
+* **E2E Playwright** — PAREX (`parex/`, EUV-UC3-005..013) y `e2e/`.
+  Los pasos posteriores al OTP están en `fixme` porque el backend ya no
+  expone un OTP de prueba.

@@ -1,75 +1,46 @@
 /**
- * Signing SPA wizard, driven by the v2 signatures backend.
+ * Signing SPA wizard, driven by the `signatures` backend.
  *
- * The component is a thin controller around a state machine derived from
- * the server-side `Ceremony.stage`. Server is authoritative: on every
- * poll tick we recompute which screen to show. The only local override
- * is a `reviewAcknowledged` flag that keeps the introduction screen
- * visible until the signer explicitly clicks Continue (otherwise a fresh
- * ceremony with `stage='created'` would immediately jump to the camera).
+ * Thin controller around a state machine derived from the server-side
+ * `Signature.stage`. The server is authoritative: every poll tick recomputes
+ * the screen. The only local override is `reviewAcknowledged`, which keeps
+ * the intro screen up until the signer clicks Continue (otherwise a fresh
+ * `FORM` signature would jump straight to the email form).
  *
  * Screens
  * -------
  *
- *   review     One-shot intro before anything is uploaded. Shows the
- *              PDF preview with the signature location highlighted.
- *              Local-only: dismissed once the user clicks Continue OR
- *              when the ceremony already has any uploaded evidence
- *              (page refresh in the middle of the flow).
+ *   review     FORM, local-only intro: PDF preview with the signature box(es).
+ *   form       FORM: signer email (where the OTP goes) + terms acknowledgement.
+ *              `set-signature-form` -> BIOMETRICS.
+ *   identity   BIOMETRICS: ID front, ID back and face. Each capture is
+ *              uploaded (presigned PUT) and validated (`set-biometrics`).
+ *              `get-required-biometrics` advances to SIGNATURE once the three
+ *              are valid.
+ *   signature  SIGNATURE: draw the signature. `set-signature-draw` -> OTP, and
+ *              we request the first code right away.
+ *   otp        OTP: 6-digit code (2 min, 3 tries). `resolve-otp` -> SIGNING.
+ *   signing    SIGNING: sign_doc stamps + seals the PDF (seconds; the backend
+ *              fails it after 60 s).
+ *   done       SIGNED: hash, link to the signed PDF, return button.
+ *   failed     FAILED: 3 wrong codes, window over, or sign_doc did not finish.
+ *   expired    `410 signature_expired`: the 15-minute window closed.
  *
- *   identity   Biometric captures. Chip picker + camera; each capture
- *              uploads to S3 then validates via Rekognition/Textract.
- *              Stays visible while any of the 3 evidences is not
- *              validated. The backend keeps stage='identity' the whole
- *              time.
+ * Polling
+ * -------
  *
- *   signature  Draw the ink signature. Reached once the 3 biometrics
- *              are validated AND the signature PNG hasn't been uploaded
- *              yet. Backend stage is still 'identity' at this point --
- *              `resolved_stage()` only advances to 'consent' when the
- *              4th evidence (drawn signature) is registered.
- *
- *   consent    Explicit terms + checkbox. The Fase 10b shim recorded
- *              consent silently before OTP; this screen fixes it. Only
- *              after the user checks the box and clicks Continue do we
- *              POST /consent AND then chain POST /otp so the code is
- *              already in flight when the OTP screen mounts.
- *
- *   otp        Six-digit code entry. If the OTP was requested but the
- *              user refreshed and it's still valid, we don't auto-resend.
- *              Otherwise we auto-request on mount for a snappy UX.
- *
- *   signing    Dedicated waiting screen after verify_otp. The async sign
- *              Lambda takes 30-90s (cold start + pyhanko). Kept polling
- *              at a faster cadence here for perceived responsiveness.
- *              Bounded by WAIT_FOR_SIGNED_TIMEOUT_MS; on timeout we show
- *              a soft error suggesting a reload.
- *
- *   done       Terminal success. Hash, download link, return button.
- *
- *   failed     Terminal error. No retry -- the ceremony is dead and the
- *              signer must ask the portal to open a new one. We surface
- *              the returnUrl (if present) as "back to portal" instead
- *              of a "retry" affordance.
- *
- *   expired    Terminal error (TTL). Same recovery guidance as failed.
- *
- * Polling strategy
- * ----------------
- *
- * A single interval loop. Faster tick while `stage='signing'` so the
- * transition to `signed` feels immediate. Skipped when the user is in
- * the middle of an interaction (uploading, verifying, requesting OTP)
- * to avoid a stale server-side view stomping on optimistic local
- * state.
+ * One timeout loop on `get-signature` (plus `get-required-biometrics` while in
+ * BIOMETRICS). Faster while SIGNING. Skipped while an interaction is in
+ * flight, so a stale read can't stomp on the optimistic local state. Stops on
+ * terminal stages.
  */
 
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import {
   Component,
   OnDestroy,
   OnInit,
-  ViewChild,
   computed,
   inject,
   signal,
@@ -78,7 +49,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 
 import { environment } from '../../environments/environment';
-import { getInstalledDebugOtpKey, installSigningE2EHooks } from '../core/e2e-hooks';
+import { installSigningE2EHooks } from '../core/e2e-hooks';
 import {
   HOST_RETURN_LABEL,
   HOST_STANDALONE_DONE_LABEL,
@@ -86,27 +57,26 @@ import {
   resolveReturnUrl,
 } from '../core/host-app';
 import {
-  Ceremony,
-  EvidenceTypeApi,
+  BIOMETRIC_TYPES,
+  BiometricContentType,
+  BiometricType,
+  MAX_OTP_TRIES,
+  RequiredBiometrics,
+  Signature,
+  SignatureApiError,
   SignaturesService,
   TERMINAL_STAGES,
 } from '../core/signatures.service';
 import { CameraCaptureComponent, CameraMode } from './sign/camera-capture.component';
 import { PdfPreviewComponent } from './sign/pdf-preview.component';
 import { SignaturePadComponent } from './sign/signature-pad.component';
+import { friendlyDrawError, friendlyFormError, friendlyRejection } from './sign/sign-copy';
 
-// ---------------------------------------------------------------------------
-// Wizard screens. Not 1:1 with backend CeremonyStage: `identity` in the
-// backend covers both biometric photos and the drawn signature, but the
-// UI splits them into two screens; `created` maps to a local-only intro
-// screen; terminal stages get dedicated screens for error recovery UX.
-// ---------------------------------------------------------------------------
-
-type Screen =
+export type Screen =
   | 'review'
+  | 'form'
   | 'identity'
   | 'signature'
-  | 'consent'
   | 'otp'
   | 'signing'
   | 'done'
@@ -114,39 +84,22 @@ type Screen =
   | 'expired';
 
 interface StepDef {
-  key: Extract<Screen, 'review' | 'identity' | 'signature' | 'consent' | 'otp'>;
+  key: Extract<Screen, 'review' | 'form' | 'identity' | 'signature' | 'otp'>;
   label: string;
   icon: string;
 }
 
-/** The 5 interactive screens shown in the stepper. Terminal + waiting
- *  screens are intentionally omitted. */
+/** The interactive screens shown in the stepper. */
 const STEPS: StepDef[] = [
-  { key: 'review',    label: 'Revision',  icon: 'bi-file-earmark-text' },
-  { key: 'identity',  label: 'Identidad', icon: 'bi-person-badge' },
-  { key: 'signature', label: 'Firma',     icon: 'bi-vector-pen' },
-  { key: 'consent',   label: 'Terminos',  icon: 'bi-clipboard-check' },
-  { key: 'otp',       label: 'Codigo',    icon: 'bi-envelope-check' },
+  { key: 'review', label: 'Revision', icon: 'bi-file-earmark-text' },
+  { key: 'form', label: 'Correo', icon: 'bi-envelope' },
+  { key: 'identity', label: 'Identidad', icon: 'bi-person-badge' },
+  { key: 'signature', label: 'Firma', icon: 'bi-vector-pen' },
+  { key: 'otp', label: 'Codigo', icon: 'bi-envelope-check' },
 ];
 
-/** Rank a screen for "server has advanced past this UI position?"
- *  comparisons. Terminal screens sit at the far end and short-circuit
- *  the check via TERMINAL_STAGES on the ceremony side. */
-const SCREEN_RANK: Record<Screen, number> = {
-  review: 0,
-  identity: 1,
-  signature: 2,
-  consent: 3,
-  otp: 4,
-  signing: 5,
-  done: 6,
-  failed: 6,
-  expired: 6,
-};
-
 interface DocDef {
-  /** API-facing evidence type (what POST /upload-url accepts). */
-  type: Extract<EvidenceTypeApi, 'id_front' | 'id_back' | 'face'>;
+  type: BiometricType;
   label: string;
   short: string;
   hint: string;
@@ -156,35 +109,32 @@ interface DocDef {
 
 const DOCS: DocDef[] = [
   {
-    type: 'id_front',
+    type: 'ID_FRONT',
     label: 'Documento - cara frontal',
     short: 'Frontal',
-    hint: 'Centra el frente de tu documento dentro del recuadro',
+    hint: 'Centra el frente de tu documento dentro del recuadro, que se lea el numero',
     icon: 'bi-person-vcard',
     mode: 'document',
   },
   {
-    type: 'id_back',
+    type: 'ID_BACK',
     label: 'Documento - cara posterior',
     short: 'Posterior',
-    hint: 'Ahora la cara posterior, que se lea el codigo',
+    hint: 'Ahora la cara posterior, con buena luz y sin reflejos',
     icon: 'bi-person-vcard-fill',
     mode: 'document',
   },
   {
-    type: 'face',
+    type: 'FACE',
     label: 'Foto de tu rostro',
     short: 'Tu rostro',
-    hint: 'Ubica tu rostro dentro del ovalo, con buena luz',
+    hint: 'Ubica tu rostro dentro del ovalo, con los ojos abiertos y buena luz',
     icon: 'bi-emoji-smile',
     mode: 'face',
   },
 ];
 
-/** Terms text shown on the consent screen. Kept intentionally simple
- *  and in Spanish; the version string must match `_KNOWN_TERMS_VERSIONS`
- *  in backend/services/signatures/src/handlers/consent/handler.py. */
-const TERMS_VERSION = 'v1.0';
+/** Shown on the email screen; accepting them is what enables the submit. */
 const TERMS_BULLETS: readonly string[] = [
   'He revisado el documento y su contenido refleja mi voluntad de firmarlo.',
   'Autorizo el uso de mi firma electronica sobre este documento, con el mismo valor legal que una firma manuscrita (Ley 527 de 1999).',
@@ -192,258 +142,240 @@ const TERMS_BULLETS: readonly string[] = [
   'Entiendo que el codigo que llegara a mi correo es personal y no debo compartirlo.',
 ];
 
-/** Poll cadence for GET /signatures/{sign_id}. Faster while the async
- *  sign worker is running so the 'signed' transition feels instant. */
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 const POLL_INTERVAL_MS = 4000;
 const POLL_INTERVAL_MS_WHILE_SIGNING = 2000;
-
-/** Upper bound while waiting for the async sign worker after OTP. Real
- *  worker time is 30-90s; giving 3 min of grace covers cold starts on a
- *  quiet dev environment. */
-const WAIT_FOR_SIGNED_TIMEOUT_MS = 180_000;
+/** sign_doc is failed by the backend after 60 s; this is just a soft UI hint. */
+const SLOW_SIGNING_HINT_MS = 75_000;
 
 @Component({
   selector: 'app-sign',
   standalone: true,
-  imports: [
-    CommonModule,
-    FormsModule,
-    CameraCaptureComponent,
-    PdfPreviewComponent,
-    SignaturePadComponent,
-  ],
+  imports: [CommonModule, FormsModule, CameraCaptureComponent, PdfPreviewComponent, SignaturePadComponent],
   templateUrl: './sign.component.html',
 })
 export class SignComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private api = inject(SignaturesService);
 
-  @ViewChild(CameraCaptureComponent) camera?: CameraCaptureComponent;
 
   readonly STEPS = STEPS;
   readonly DOCS = DOCS;
-  readonly TERMS_VERSION = TERMS_VERSION;
   readonly TERMS_BULLETS = TERMS_BULLETS;
   readonly HOST_RETURN_LABEL = HOST_RETURN_LABEL;
   readonly HOST_STANDALONE_DONE_LABEL = HOST_STANDALONE_DONE_LABEL;
+  readonly MAX_OTP_TRIES = MAX_OTP_TRIES;
 
   // -------------------------------------------------------------------------
   // URL-derived state
   // -------------------------------------------------------------------------
 
-  signId = '';
-  /** Same-origin `?return_url=` value, or null when the signer arrived
-   *  via the email path. Used by all terminal screens for the CTA. */
+  signatureId = '';
+  /** Same-origin `?return_url=`, or null when the signer came some other way. */
   returnUrl: string | null = null;
 
   // -------------------------------------------------------------------------
-  // Ceremony + UI state
+  // Server + UI state
   // -------------------------------------------------------------------------
 
-  ceremony = signal<Ceremony | null>(null);
-  /** True when the initial GET returned 404 / malformed. Renders a
-   *  dedicated missing-link screen instead of the wizard. */
+  signature = signal<Signature | null>(null);
+  /** Validation status of each evidence; loaded while in BIOMETRICS. */
+  biometrics = signal<RequiredBiometrics | null>(null);
+  /** The id is malformed or does not exist. */
   notFound = signal(false);
-  /** Local-only: the signer clicked "Continue" on the review screen.
-   *  Without this, a fresh `stage='created'` ceremony would render the
-   *  camera immediately. */
+  /** `410 signature_expired`. */
+  expired = signal(false);
   reviewAcknowledged = signal(false);
-  /** Global inline error (dismissible; auto-cleared on the next successful
-   *  action). Terminal errors are surfaced via the failed/expired screens
-   *  instead. */
+
+  /** Recoverable action error (terminal ones get their own screens). */
   error = signal('');
-  /** True while a POST/PUT is in flight. Suppresses polling to avoid
-   *  optimistic UI being clobbered. */
+  /** A POST is in flight; polling is paused. */
   busy = signal(false);
-  /** True while an evidence upload+validate is in flight. Separate from
-   *  `busy` so the two can coexist (e.g., resend OTP while a photo is
-   *  still uploading is disallowed, but the camera stays interactive). */
+  /** An evidence upload + validation is in flight. */
   uploadBusy = signal(false);
+  /** Reason of the last rejected evidence (`too_few_legible_lines`...). */
+  lastRejection = signal('');
+  /** Why the last photo did not pass. While set, the identity screen shows it INSTEAD of the camera. */
+  identityError = signal('');
 
-  currentDoc = signal<EvidenceTypeApi | ''>('');
+  // form
+  email = '';
+  termsAccepted = signal(false);
+
+  // identity
+  currentDoc = signal<BiometricType | ''>('');
+
+  // signature
   signatureBlob: Blob | null = null;
+  drawSubmitted = signal(false);
 
+  // otp
   otp = '';
-  /** True once we know an OTP is in flight for this ceremony (either the
-   *  server told us so on load, or we requested it ourselves). */
+  /** A code was requested in this browser session. */
   otpSent = signal(false);
-  /** Filled from `_debug_otp` when the backend HMAC hatch is enabled.
-   *  Never populated in prod builds -- the SPA never sends the debug
-   *  HMAC header on its own. */
-  devOtp = signal('');
+  emailSent = signal(true);
+  otpExpiresAt = signal<number | null>(null);
+  attemptsLeft = signal(MAX_OTP_TRIES);
 
-  /** Set to true when the user ticks the consent checkbox. Only used on
-   *  the consent screen. */
-  consentChecked = signal(false);
-
-  // -------------------------------------------------------------------------
-  // Timers
-  // -------------------------------------------------------------------------
+  /** 1 s clock for countdowns. */
+  now = signal(Date.now());
 
   private poll: number | null = null;
-  private pollIntervalMs = POLL_INTERVAL_MS;
-  /** Wall-clock start of the "wait for signed" phase. Used to enforce
-   *  WAIT_FOR_SIGNED_TIMEOUT_MS on the signing screen. */
-  private waitStartedAt: number | null = null;
+  private clock: number | null = null;
+  private signingSince: number | null = null;
 
   // -------------------------------------------------------------------------
-  // Derived screen -- server-authoritative with a local review override.
+  // Derived
   // -------------------------------------------------------------------------
 
   readonly screen = computed<Screen>(() => {
-    const c = this.ceremony();
-    // Pre-load / not-found paths are rendered elsewhere; this method
-    // only runs when a ceremony is set.
-    if (!c) return 'review';
-
-    // Terminal stages take precedence.
-    if (c.stage === 'failed') return 'failed';
-    if (c.stage === 'expired') return 'expired';
-    if (c.stage === 'signed') return 'done';
-    if (c.stage === 'signing') return 'signing';
-
-    // Interactive stages.
-    if (c.stage === 'otp') return 'otp';
-    if (c.stage === 'consent') return 'consent';
-
-    // 'created' or 'identity'. Decide between review / identity / signature.
-    const uploads = c.uploads_state;
-    const anyUploaded =
-      uploads.id_front.uploaded ||
-      uploads.id_back.uploaded ||
-      uploads.face.uploaded ||
-      uploads.signature.uploaded;
-
-    // Review is a local-only screen. Show it iff the ceremony is fresh
-    // AND the user hasn't dismissed it AND nothing has been uploaded
-    // yet. On refresh mid-flow we always skip it.
-    if (
-      c.stage === 'created' &&
-      !anyUploaded &&
-      !this.reviewAcknowledged()
-    ) {
-      return 'review';
+    if (this.expired()) return 'expired';
+    const s = this.signature();
+    if (!s) return 'review';
+    switch (s.stage) {
+      case 'FAILED':
+        return 'failed';
+      case 'SIGNED':
+        return 'done';
+      case 'SIGNING':
+        return 'signing';
+      case 'OTP':
+        return 'otp';
+      case 'SIGNATURE':
+        return 'signature';
+      case 'BIOMETRICS':
+        return 'identity';
+      case 'FORM':
+      default:
+        return this.reviewAcknowledged() ? 'form' : 'review';
     }
-
-    // Signature pad screen: 3 biometrics validated AND signature not
-    // uploaded yet. Otherwise stay on identity.
-    const biometricsDone =
-      uploads.id_front.validated === true &&
-      uploads.id_back.validated === true &&
-      uploads.face.validated === true;
-    if (biometricsDone && !uploads.signature.uploaded) return 'signature';
-
-    return 'identity';
   });
 
-  readonly stepIndex = computed(() => {
-    const s = this.screen();
-    return STEPS.findIndex((step) => step.key === s);
+  readonly stepIndex = computed(() => STEPS.findIndex((step) => step.key === this.screen()));
+
+  readonly showStepper = computed(() => this.stepIndex() !== -1);
+
+  readonly docDone = computed<Record<BiometricType, boolean>>(() => {
+    const b = this.biometrics();
+    return { ID_FRONT: !!b?.ID_FRONT, ID_BACK: !!b?.ID_BACK, FACE: !!b?.FACE };
   });
 
-  readonly showStepper = computed(() => {
-    const s = this.screen();
-    return s !== 'signing' && s !== 'done' && s !== 'failed' && s !== 'expired';
+  readonly allBiometricsDone = computed(() => BIOMETRIC_TYPES.every((t) => this.docDone()[t]));
+
+  readonly activeDoc = computed(() => DOCS.find((d) => d.type === this.currentDoc()) ?? null);
+
+  /** First signature box, used for the preview. */
+  readonly primaryBox = computed(() => this.signature()?.sign_location?.[0] ?? null);
+
+  readonly windowSecondsLeft = computed(() => {
+    const s = this.signature();
+    if (!s) return null;
+    return Math.max(0, Math.floor((Date.parse(s.expires_at) - this.now()) / 1000));
   });
 
-  readonly docDone = computed(() => {
-    const c = this.ceremony();
-    return {
-      id_front: c?.uploads_state.id_front.validated === true,
-      id_back: c?.uploads_state.id_back.validated === true,
-      face: c?.uploads_state.face.validated === true,
-    };
+  readonly windowMinutesLeft = computed(() => Math.ceil((this.windowSecondsLeft() ?? 0) / 60));
+
+  readonly otpSecondsLeft = computed(() => {
+    const at = this.otpExpiresAt();
+    return at === null ? null : Math.max(0, Math.floor((at - this.now()) / 1000));
   });
 
-  readonly allBiometricsDone = computed(() => {
-    const d = this.docDone();
-    return d.id_front && d.id_back && d.face;
-  });
+  readonly signingSeconds = computed(() =>
+    this.signingSince === null ? 0 : Math.floor((this.now() - this.signingSince) / 1000),
+  );
 
-  readonly activeDoc = computed(() => {
-    const cd = this.currentDoc();
-    if (cd === 'id_front' || cd === 'id_back' || cd === 'face') {
-      return DOCS.find((d) => d.type === cd) ?? null;
-    }
-    return null;
-  });
+  /** Mirror of `email` so `emailValid` reacts to typing. */
+  emailModel = signal('');
+  readonly emailValid = computed(() => EMAIL_RE.test(this.emailModel().trim()));
 
   // -------------------------------------------------------------------------
   // Lifecycle
   // -------------------------------------------------------------------------
 
   ngOnInit(): void {
-    // ActivatedRoute reuses this component across sign_ids, so we
-    // subscribe to the param stream rather than reading the snapshot
-    // once.
     this.route.paramMap.subscribe((params) => {
-      this.signId = params.get('sign_id') ?? '';
+      this.signatureId = params.get('sign_id') ?? '';
       this.load();
     });
-    this.returnUrl = resolveReturnUrl(
-      this.route.snapshot.queryParamMap.get(RETURN_URL_QUERY_PARAM),
-    );
-    // Playwright / E2E hook. No-op unless the current stage is explicitly
-    // E2E-enabled AND the URL carries `?e2e=1`.
-    // See core/e2e-hooks.ts for the security rationale.
+    const q = this.route.snapshot.queryParamMap;
+    this.returnUrl = resolveReturnUrl(q.get(RETURN_URL_QUERY_PARAM));
+    this.setEmail(q.get('email') ?? '');
+    this.clock = window.setInterval(() => this.now.set(Date.now()), 1000);
+    // Playwright hook. No-op unless the stage is E2E-enabled AND the URL has ?e2e=1.
     installSigningE2EHooks(this, environment.stage);
   }
 
   ngOnDestroy(): void {
     this.stopPolling();
+    if (this.clock !== null) window.clearInterval(this.clock);
   }
 
   // -------------------------------------------------------------------------
-  // Ceremony fetch + polling
+  // Fetch + polling
   // -------------------------------------------------------------------------
 
   private load(): void {
     this.notFound.set(false);
-    this.ceremony.set(null);
+    this.expired.set(false);
+    this.signature.set(null);
+    this.biometrics.set(null);
     this.reviewAcknowledged.set(false);
-    this.consentChecked.set(false);
-    if (!this.signId) {
+    if (!this.signatureId) {
       this.notFound.set(true);
       return;
     }
-    this.api.get(this.signId).subscribe({
-      next: (c) => {
-        this.applyCeremony(c);
+    this.api.get(this.signatureId).subscribe({
+      next: (s) => {
+        this.applySignature(s);
         this.startPolling();
       },
-      error: () => this.notFound.set(true),
+      error: (err: HttpErrorResponse) => this.onReadError(err, true),
     });
   }
 
-  private applyCeremony(c: Ceremony): void {
-    this.ceremony.set(c);
-    // Preselect the first pending biometric if we land on the identity
-    // screen with none selected.
-    if (
-      this.screen() === 'identity' &&
-      !this.currentDoc()
-    ) {
-      this.currentDoc.set(this.nextPendingBiometric());
+  private onReadError(err: HttpErrorResponse, initial: boolean): void {
+    if (err.status === 410) {
+      this.expired.set(true);
+      this.stopPolling();
+      return;
     }
-    // Reflect server-observed OTP state so we don't auto-resend on
-    // refresh when a code is already live.
-    if (c.otp.requested) this.otpSent.set(true);
-    // Terminal / signing: manage the wait timer.
-    if (c.stage === 'signing') {
-      if (this.waitStartedAt === null) this.waitStartedAt = Date.now();
-    } else {
-      this.waitStartedAt = null;
+    if (initial || err.status === 404) {
+      this.notFound.set(true);
+      this.stopPolling();
     }
   }
 
-  private nextPendingBiometric(): EvidenceTypeApi | '' {
+  private applySignature(s: Signature): void {
+    this.signature.set(s);
+    if (s.stage === 'BIOMETRICS') {
+      if (this.biometrics() === null) this.loadBiometrics();
+      else if (!this.currentDoc()) this.currentDoc.set(this.nextPendingDoc());
+    }
+    if (s.stage === 'SIGNING') this.signingSince ??= Date.now();
+    else this.signingSince = null;
+  }
+
+  private loadBiometrics(after?: () => void): void {
+    this.api.requiredBiometrics(this.signatureId).subscribe({
+      next: (b) => {
+        this.biometrics.set(b);
+        if (!this.currentDoc() || this.docDone()[this.currentDoc() as BiometricType]) {
+          this.currentDoc.set(this.nextPendingDoc());
+        }
+        after?.();
+      },
+      error: () => after?.(),
+    });
+  }
+
+  private nextPendingDoc(): BiometricType | '' {
     const done = this.docDone();
     return DOCS.find((d) => !done[d.type])?.type ?? '';
   }
 
   private startPolling(): void {
-    if (this.poll !== null) return;
-    this.scheduleNextPoll();
+    if (this.poll === null) this.scheduleNextPoll();
   }
 
   private stopPolling(): void {
@@ -454,102 +386,151 @@ export class SignComponent implements OnInit, OnDestroy {
   }
 
   private scheduleNextPoll(): void {
-    const c = this.ceremony();
-    if (c && (TERMINAL_STAGES as readonly string[]).includes(c.stage)) {
-      // Terminal: no more work to do; save the runner some CPU.
+    const s = this.signature();
+    if (this.expired() || (s && TERMINAL_STAGES.includes(s.stage))) {
       this.stopPolling();
       return;
     }
-    this.pollIntervalMs =
-      c?.stage === 'signing'
-        ? POLL_INTERVAL_MS_WHILE_SIGNING
-        : POLL_INTERVAL_MS;
-    this.poll = window.setTimeout(() => this.tick(), this.pollIntervalMs);
+    const ms = s?.stage === 'SIGNING' ? POLL_INTERVAL_MS_WHILE_SIGNING : POLL_INTERVAL_MS;
+    this.poll = window.setTimeout(() => this.tick(), ms);
   }
 
   private tick(): void {
     this.poll = null;
     if (this.busy() || this.uploadBusy()) {
-      // Don't step on an in-flight interaction; try again on the next
-      // scheduled tick.
       this.scheduleNextPoll();
       return;
     }
-    this.api.get(this.signId).subscribe({
-      next: (c) => {
-        this.applyCeremony(c);
-        // Signing timeout guard.
-        if (
-          c.stage === 'signing' &&
-          this.waitStartedAt !== null &&
-          Date.now() - this.waitStartedAt > WAIT_FOR_SIGNED_TIMEOUT_MS
-        ) {
-          this.error.set(
-            'La firma esta tomando mas de lo esperado. Espera un momento o recarga la pagina.',
-          );
-        } else if (c.stage !== 'signing') {
-          // Reset the timer once we leave signing (success or failure).
-          this.waitStartedAt = null;
-        }
+    // In BIOMETRICS, refresh the evidence map first: its side effect is the
+    // advance to SIGNATURE, which the following get-signature then sees.
+    if (this.signature()?.stage === 'BIOMETRICS') {
+      this.loadBiometrics(() => this.fetchSignature());
+    } else {
+      this.fetchSignature();
+    }
+  }
+
+  private fetchSignature(): void {
+    this.api.get(this.signatureId).subscribe({
+      next: (s) => {
+        this.applySignature(s);
         this.scheduleNextPoll();
       },
-      error: () => {
-        // Transient network error: try again on next tick.
-        this.scheduleNextPoll();
+      error: (err: HttpErrorResponse) => {
+        this.onReadError(err, false);
+        if (!this.expired() && !this.notFound()) this.scheduleNextPoll();
       },
     });
+  }
+
+  /** After a mutation we know moved the stage: read now instead of waiting a tick. */
+  private refreshNow(): void {
+    this.stopPolling();
+    this.fetchSignature();
   }
 
   // -------------------------------------------------------------------------
   // Screen: review
   // -------------------------------------------------------------------------
 
-  goToIdentity(): void {
+  acknowledgeReview(): void {
     this.reviewAcknowledged.set(true);
-    this.currentDoc.set(this.nextPendingBiometric());
+  }
+
+  // -------------------------------------------------------------------------
+  // Screen: form
+  // -------------------------------------------------------------------------
+
+  setEmail(value: string): void {
+    this.email = value;
+    this.emailModel.set(value);
+  }
+
+  submitForm(): void {
+    if (!this.emailValid() || !this.termsAccepted() || this.busy()) return;
+    this.busy.set(true);
+    this.error.set('');
+    this.api.setForm(this.signatureId, this.email.trim()).subscribe({
+      next: () => {
+        this.busy.set(false);
+        this.refreshNow();
+      },
+      error: (err: HttpErrorResponse) => {
+        this.busy.set(false);
+        this.handleMutationError(err, friendlyFormError);
+      },
+    });
   }
 
   // -------------------------------------------------------------------------
   // Screen: identity
   // -------------------------------------------------------------------------
 
-  pickDoc(type: EvidenceTypeApi): void {
-    if (this.uploadBusy()) return;
+  pickDoc(type: BiometricType): void {
+    if (this.uploadBusy() || this.docDone()[type]) return;
     this.currentDoc.set(type);
+    this.identityError.set('');
   }
 
   onCaptured(blob: Blob): void {
     const type = this.currentDoc();
     if (!type || this.uploadBusy()) return;
-    if (type !== 'id_front' && type !== 'id_back' && type !== 'face') return;
+    const contentType: BiometricContentType = blob.type === 'image/png' ? 'image/png' : 'image/jpeg';
     this.uploadBusy.set(true);
     this.error.set('');
+    this.identityError.set('');
+    this.lastRejection.set('');
 
-    this.api.uploadEvidence(this.signId, type, blob, 'image/jpeg').subscribe({
-      next: () => {
-        const validate$ =
-          type === 'id_front'
-            ? this.api.validateIdSide(this.signId, 'front')
-            : type === 'id_back'
-              ? this.api.validateIdSide(this.signId, 'back')
-              : this.api.validateFace(this.signId);
-        validate$.subscribe({
+    this.api.uploadBiometric(this.signatureId, type, blob, contentType).subscribe({
+      next: (key) => {
+        this.api.setBiometric(this.signatureId, type, key).subscribe({
           next: (r) => {
-            this.uploadBusy.set(false);
-            this.refreshFromServerStage(r.stage);
-            this.camera?.reset();
+            if (!r.is_valid) {
+              this.uploadBusy.set(false);
+              this.lastRejection.set(r.reason);
+              this.identityError.set(friendlyRejection(r.reason));
+              return;
+            }
+            this.afterBiometricStored();
           },
-          error: (err) => {
+          error: (err: HttpErrorResponse) => {
+            if ((err.error as SignatureApiError | null)?.error === 'biometric_already_set') {
+              this.afterBiometricStored();
+              return;
+            }
             this.uploadBusy.set(false);
-            this.error.set(this.friendlyValidateError(err?.error?.error));
-            this.camera?.reset();
+            this.failIdentity(err, () => 'No pudimos validar la foto. Tomala de nuevo con buena luz.');
           },
         });
       },
-      error: () => {
+      error: (err: HttpErrorResponse) => {
         this.uploadBusy.set(false);
-        this.error.set('No pudimos subir la foto. Revisa tu conexion.');
+        this.failIdentity(err, () => 'No pudimos subir la foto. Revisa tu conexion.');
       },
+    });
+  }
+
+  /** Photo error: shown in place of the camera, which stays off until the user asks to retry. */
+  private failIdentity(err: HttpErrorResponse, fallback: (code: string | undefined) => string): void {
+    this.handleMutationError(err, fallback);
+    const message = this.error();
+    if (message) {
+      this.error.set('');
+      this.identityError.set(message);
+    }
+  }
+
+  /** "Intentar de nuevo": brings the camera back. */
+  retryIdentity(): void {
+    this.identityError.set('');
+    this.lastRejection.set('');
+  }
+
+  /** Re-read the map (advances to SIGNATURE when complete), then the signature. */
+  private afterBiometricStored(): void {
+    this.loadBiometrics(() => {
+      this.uploadBusy.set(false);
+      if (this.allBiometricsDone()) this.refreshNow();
     });
   }
 
@@ -565,71 +546,15 @@ export class SignComponent implements OnInit, OnDestroy {
     if (!this.signatureBlob || this.busy()) return;
     this.busy.set(true);
     this.error.set('');
-
-    this.api
-      .uploadEvidence(this.signId, 'signature_drawing', this.signatureBlob, 'image/png')
-      .subscribe({
-        next: () => {
-          this.api.registerSignature(this.signId).subscribe({
-            next: (r) => {
-              this.busy.set(false);
-              // Server advanced to 'consent' if everything is ready.
-              this.refreshFromServerStage(r.stage);
-            },
-            error: () => {
-              this.busy.set(false);
-              this.error.set('No pudimos guardar tu firma. Intenta de nuevo.');
-            },
-          });
-        },
-        error: () => {
-          this.busy.set(false);
-          this.error.set('No pudimos guardar tu firma. Intenta de nuevo.');
-        },
-      });
-  }
-
-  // -------------------------------------------------------------------------
-  // Screen: consent
-  // -------------------------------------------------------------------------
-
-  acceptConsent(): void {
-    if (!this.consentChecked() || this.busy()) return;
-    this.busy.set(true);
-    this.error.set('');
-    this.api.consent(this.signId, TERMS_VERSION).subscribe({
+    this.api.setDraw(this.signatureId, this.signatureBlob).subscribe({
       next: () => {
-        // POST /consent doesn't advance the stage on its own; the
-        // *next* action (request_otp) is what moves the stage to
-        // 'otp'. Chain them so the OTP is already in flight when the
-        // OTP screen mounts.
-        this.sendOtpAfterConsent();
+        this.drawSubmitted.set(true);
+        // Now in OTP: request the first code so it is on its way already.
+        this.requestOtp();
       },
-      error: (err) => {
+      error: (err: HttpErrorResponse) => {
         this.busy.set(false);
-        this.error.set(this.friendlyConsentError(err?.error?.error));
-      },
-    });
-  }
-
-  private sendOtpAfterConsent(): void {
-    // When the E2E hook installed a debug OTP HMAC key (`?e2e=1`
-    // in an E2E-enabled stage), we forward it to requestOtp so the
-    // backend echoes the plaintext OTP back in the response. When no
-    // E2E debug key is installed, this remains empty and the call is
-    // identical to the normal user flow.
-    const debugKey = getInstalledDebugOtpKey();
-    this.api.requestOtp(this.signId, debugKey || undefined).subscribe({
-      next: (r) => {
-        this.busy.set(false);
-        this.otpSent.set(true);
-        this.devOtp.set(r._debug_otp ?? '');
-        // Force a refresh so the screen recomputes to 'otp' immediately.
-        this.refreshFromServerStage(r.stage);
-      },
-      error: () => {
-        this.busy.set(false);
-        this.error.set('No pudimos enviar el codigo. Intenta de nuevo.');
+        this.handleMutationError(err, friendlyDrawError);
       },
     });
   }
@@ -638,152 +563,93 @@ export class SignComponent implements OnInit, OnDestroy {
   // Screen: otp
   // -------------------------------------------------------------------------
 
-  /** Called from the template when the OTP screen mounts to ensure a
-   *  code is in flight. Idempotent: bails when we've already requested
-   *  one during this browser session, or when the server-side OTP is
-   *  still live (visible via `c.otp.requested === true` at load time).
-   *  Wired via a one-shot effect in the template. */
-  ensureOtpRequested(): void {
-    if (this.otpSent() || this.busy()) return;
-    this.resendOtp();
-  }
-
-  resendOtp(): void {
+  requestOtp(): void {
     this.busy.set(true);
     this.error.set('');
-    // Same debug-key forwarding as sendOtpAfterConsent, for the case
-    // where the E2E driver reaches the OTP screen without going
-    // through consent (page refresh mid-flow) and still needs the
-    // plaintext code to progress.
-    const debugKey = getInstalledDebugOtpKey();
-    this.api.requestOtp(this.signId, debugKey || undefined).subscribe({
+    this.api.setOtp(this.signatureId).subscribe({
       next: (r) => {
         this.busy.set(false);
         this.otpSent.set(true);
-        this.devOtp.set(r._debug_otp ?? '');
+        this.emailSent.set(r.email_sent);
+        this.otpExpiresAt.set(Date.parse(r.expires_at));
+        this.attemptsLeft.set(MAX_OTP_TRIES);
+        this.otp = '';
+        if (!r.email_sent) this.error.set('No pudimos enviar el correo. Pide un codigo nuevo.');
+        this.refreshNow();
       },
-      error: () => {
+      error: (err: HttpErrorResponse) => {
         this.busy.set(false);
-        this.error.set('No pudimos enviar el codigo. Intenta de nuevo.');
+        this.handleMutationError(err, () => 'No pudimos enviar el codigo. Intenta de nuevo.');
       },
     });
   }
 
   confirmOtp(): void {
-    if (this.otp.length !== 6 || this.busy()) return;
+    if (!/^\d{6}$/.test(this.otp) || this.busy()) return;
     this.busy.set(true);
     this.error.set('');
-    this.api.verifyOtp(this.signId, this.otp).subscribe({
-      next: (r) => {
+    this.api.resolveOtp(this.signatureId, this.otp).subscribe({
+      next: () => {
         this.busy.set(false);
-        // Stage is now 'signing'. The screen computed signal will pick
-        // that up on the next tick (or right now if refreshFromServerStage
-        // sees the advance). Start the wait timer explicitly so the
-        // timeout kicks in even if the very next poll succeeds
-        // immediately.
-        this.waitStartedAt = Date.now();
-        this.refreshFromServerStage(r.stage);
+        this.signingSince = Date.now();
+        this.refreshNow();
       },
-      error: (err) => {
+      error: (err: HttpErrorResponse) => {
         this.busy.set(false);
-        this.error.set(this.friendlyOtpError(err?.error?.error));
+        const body = err.error as SignatureApiError | null;
+        switch (body?.error) {
+          case 'otp_invalid':
+            this.attemptsLeft.set(body.attempts_left ?? Math.max(0, this.attemptsLeft() - 1));
+            this.error.set('Codigo incorrecto. Revisa tu correo e intenta de nuevo.');
+            return;
+          case 'otp_expired':
+            this.otpExpiresAt.set(Date.now());
+            this.error.set('El codigo vencio. Pide uno nuevo.');
+            return;
+          case 'otp_not_requested':
+            this.otpSent.set(false);
+            this.error.set('Primero pide el codigo.');
+            return;
+          case 'otp_max_attempts':
+            this.error.set('');
+            this.refreshNow();
+            return;
+          default:
+            this.handleMutationError(err, () => 'No pudimos confirmar la firma. Intenta de nuevo.');
+        }
       },
     });
   }
 
   // -------------------------------------------------------------------------
-  // Screen: signing / done / failed / expired
+  // Terminal screens
   // -------------------------------------------------------------------------
 
-  /** Human-readable time the signer has been on the signing screen.
-   *  Purely cosmetic; used to keep the "esto puede tardar hasta 1 min"
-   *  message honest. Returns 0 before the wait started. */
-  readonly waitingSeconds = computed(() => {
-    // The computed re-runs whenever `ceremony` changes (which happens
-    // every poll tick). That's frequent enough for a rough counter.
-    void this.ceremony();
-    if (this.waitStartedAt === null) return 0;
-    return Math.floor((Date.now() - this.waitStartedAt) / 1000);
-  });
+  readonly slowSigning = computed(() => this.signingSeconds() * 1000 > SLOW_SIGNING_HINT_MS);
 
   backToProcess(): void {
-    if (this.returnUrl) {
-      window.location.assign(this.returnUrl);
-    }
-    // No return URL -> the button is hidden in the template. No-op.
+    if (this.returnUrl) window.location.assign(this.returnUrl);
   }
 
   // -------------------------------------------------------------------------
-  // Error copy
+  // Errors
   // -------------------------------------------------------------------------
 
-  private friendlyValidateError(code: string | undefined): string {
-    switch (code) {
-      case 'evidence_missing':
-        return 'No recibimos la foto. Intentalo de nuevo.';
-      case 'face_invalid_eyes_closed':
-        return 'Abre bien los ojos y toma la foto nuevamente.';
-      case 'face_invalid_no_face':
-        return 'No detectamos tu rostro. Acerca la camara.';
-      case 'face_invalid_multiple_faces':
-        return 'Solo debe aparecer una persona en la foto.';
-      case 'id_invalid_no_text':
-      case 'id_invalid_low_confidence':
-        return 'La foto del documento no es legible. Intentala con mas luz.';
-      default:
-        return 'No pudimos validar la foto. Tomala de nuevo con buena luz.';
+  /**
+   * Common to every mutation: 410 ends the ceremony, a `*_not_in_*_stage`
+   * 409 means another tab (or the server) moved on, so we just re-read.
+   */
+  private handleMutationError(err: HttpErrorResponse, fallback: (code: string | undefined) => string): void {
+    const code = (err.error as SignatureApiError | null)?.error;
+    if (err.status === 410 || code === 'signature_expired') {
+      this.expired.set(true);
+      this.stopPolling();
+      return;
     }
-  }
-
-  private friendlyConsentError(code: string | undefined): string {
-    switch (code) {
-      case 'unknown_terms_version':
-        return 'Version de terminos desactualizada. Recarga la pagina.';
-      case 'stage_not_allowed_current_created':
-      case 'stage_not_allowed_current_identity':
-        return 'Aun no puedes aceptar los terminos. Completa los pasos previos.';
-      default:
-        return 'No pudimos registrar tu aceptacion. Intenta de nuevo.';
+    if (err.status === 409 && code?.startsWith('signature_not_in_')) {
+      this.refreshNow();
+      return;
     }
-  }
-
-  private friendlyOtpError(code: string | undefined): string {
-    switch (code) {
-      case 'otp_invalid':
-        return 'Codigo incorrecto. Intenta de nuevo.';
-      case 'otp_expired':
-        return 'El codigo vencio. Pide uno nuevo.';
-      case 'otp_max_attempts':
-        return 'Demasiados intentos. Recarga la pagina para reintentar.';
-      case 'stage_not_allowed_current_otp':
-      case 'stage_not_allowed_current_signing':
-        return 'Este codigo ya fue usado. Recarga la pagina.';
-      default:
-        return 'No pudimos confirmar la firma. Intenta de nuevo.';
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Server-triggered state refresh. Called after a mutation that we
-  // KNOW advanced the stage; short-circuits the next poll tick.
-  // -------------------------------------------------------------------------
-
-  private refreshFromServerStage(_hint: string): void {
-    // The mutation responses include `stage` but not the full ceremony
-    // shape. We could patch the local ceremony optimistically, but a
-    // fresh GET keeps everything consistent (uploads_state, otp
-    // counters, hashes) with minimal cost. Cancel any pending timer
-    // and fetch now.
-    this.stopPolling();
-    this.api.get(this.signId).subscribe({
-      next: (c) => {
-        this.applyCeremony(c);
-        this.startPolling();
-      },
-      error: () => {
-        // Ignore: the scheduled poll will retry.
-        this.startPolling();
-      },
-    });
+    this.error.set(fallback(code));
   }
 }

@@ -2,25 +2,113 @@
    the shared base, so it travels with the block if it is ever extracted. */
 @import '../../shared/src/styles/base.css';
 
-/* ---------- Document preview ---------- */
-.pdf-wrap {
-  position: relative;
-  border: 1px solid var(--bs-border-color);
-  border-radius: var(--radius-md);
+/* ---------- Viewport-fit shell ----------
+   The ceremony fills the viewport: stepper on top, the step's card in the
+   middle (only its own content scrolls, if ever) and the primary action in a
+   footer that is always visible. No page-level scroll. */
+app-sign {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.sign-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 760px;
+  height: 100vh;
+  height: 100dvh;
+  padding: 0.75rem 1rem 1rem;
   overflow: hidden;
+}
+.sign-shell.wide { max-width: 1040px; }
+.sign-shell > .stepper,
+.sign-shell > #signing-window,
+.sign-shell > #signing-error { flex: 0 0 auto; }
+.sign-shell > .stepper { margin-bottom: 0.5rem !important; }
+.sign-shell > #signing-window { margin-bottom: 0.5rem !important; }
+.sign-shell .step-dot { width: 34px; height: 34px; font-size: 0.9rem; }
+.sign-shell .step-line { margin-top: 16px; }
+.sign-shell .step { gap: 0.25rem; }
+.sign-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sign-card > .card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.sign-card > .card-body.sign-fill {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sign-footer {
+  flex: 0 0 auto;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--bs-border-color);
   background: #fff;
 }
-.pdf-wrap canvas {
+@media (min-width: 768px) {
+  .sign-footer { padding: 0.9rem 1.5rem; }
+}
+.sign-terms { max-height: 28vh; overflow: auto; }
+
+app-pdf-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---------- Document preview ---------- */
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.pdf-scroll {
+  flex: 1 1 0;
+  min-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius-md);
+  background: #e8e6f2;
+  padding: 0.75rem;
+  -webkit-overflow-scrolling: touch;
+}
+.pdf-pages {
+  min-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.pdf-page {
+  position: relative;
+  width: 100%;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(23, 20, 58, 0.18);
+}
+.pdf-page canvas {
   display: block;
   width: 100%;
+  height: 100%;
 }
 .sig-box {
   position: absolute;
   aspect-ratio: 3 / 1;
   border: 2px dashed var(--brand);
-  background: rgba(124, 58, 237, 0.08);
+  background: rgba(124, 58, 237, 0.12);
   border-radius: 6px;
-  color: var(--brand-dark);
+  color: var(--brand-deeper);
   font-size: 0.72rem;
   font-weight: 700;
   display: flex;
@@ -29,10 +117,19 @@
   gap: 0.3rem;
 }
 
+@media (max-width: 575.98px) {
+  .pdf-scroll { padding: 0.4rem; }
+  .pdf-pages { gap: 0.4rem; }
+  #signing-screen-review .review-lead { display: none; }
+}
+
 /* ---------- Drawing canvas ---------- */
 .sig-pad {
   display: block;
-  width: 100%;
+  width: min(100%, 100vh);
+  aspect-ratio: 3 / 1;
+  height: auto;
+  margin-inline: auto;
   border: 1.5px dashed #ddd6fe;
   border-radius: var(--radius-md);
   background: #fff;
@@ -58,10 +155,14 @@
   overflow: hidden;
   background: #0b0a1d;
 }
-.cam-wrap.document { aspect-ratio: 4 / 3; }
+.cam-wrap.document {
+  aspect-ratio: 4 / 3;
+  max-width: 56vh;
+  margin-inline: auto;
+}
 .cam-wrap.face {
   aspect-ratio: 3 / 4;
-  max-width: 400px;
+  max-width: min(400px, 34vh);
   margin-inline: auto;
 }
 .cam-wrap video {
@@ -97,12 +198,31 @@
   border: 1px solid var(--bs-border-color);
   box-shadow: var(--shadow-sm);
 }
-.cam-shot.face { max-height: 380px; }
+.cam-shot { max-height: 42vh; }
+.cam-shot.face { max-height: 42vh; }
 .cam-error {
   background: #faf9fe;
   border: 1.5px dashed var(--bs-border-color);
   border-radius: var(--radius-md);
   color: var(--bs-secondary-color);
+}
+
+/* ---------- Identity: processing / rejected state (replaces the camera) ---------- */
+.identity-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  padding: 1.5rem 1rem;
+  border: 1.5px dashed var(--bs-border-color);
+  border-radius: var(--radius-md);
+  background: #faf9fe;
+}
+.identity-state-error {
+  border-color: #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
 }
 
 /* ---------- Document picker ---------- */

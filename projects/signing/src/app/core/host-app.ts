@@ -1,18 +1,18 @@
 /**
  * The signing SPA can be reached two ways:
  *
- *   A. Async: the backend emails a link (`/sign/{sign_id}`) after
- *      `processes/advance` opens the ceremony. The user clicks it,
- *      often on a different device (mobile) than the one that started
- *      the process (desktop). We have no session, no referrer, and no
- *      idea what to do after signing beyond a friendly "done" screen.
+ *   A. From the portal: once `processes.generate_sign` opens the
+ *      signature, the portal redirects to
+ *      `/sign/{signature_id}?return_url={encodeURIComponent(process_url)}&email=...`.
+ *      When the ceremony finishes we send the user back to that URL so
+ *      they can continue with the payment.
  *
- *   B. Sync: the portal redirects same-tab or opens a new tab pointing
- *      at `/sign/{sign_id}?return_url={encodeURIComponent(process_url)}`.
- *      When the ceremony finishes we should send the user back to that
- *      URL so they can continue the process.
+ *   B. Bare link: the same `/sign/{signature_id}` opened without query
+ *      params (copied to a phone to use its camera, for instance). No
+ *      session, no referrer, nothing to go back to beyond a friendly
+ *      "done" screen.
  *
- * Path A is the harder constraint (no context), so `return_url` is
+ * Path B is the harder constraint (no context), so `return_url` is
  * optional. Callers of `resolveReturnUrl()` render a generic completion
  * screen when it returns null.
  *
