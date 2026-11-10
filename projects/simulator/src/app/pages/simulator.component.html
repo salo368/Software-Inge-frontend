@@ -22,25 +22,35 @@
 
     <div class="col-lg-5">
       <div class="glass-card p-3 p-lg-4">
-        <div class="glass-label mb-2">Tasas E.A. del mercado &middot; {{ selectedTermLabel() }}</div>
+        <ng-template #noRate><span id="simulator-market-dash" class="opacity-50">&mdash;</span></ng-template>
+        <div class="glass-label mb-2">
+          Tasas E.A. del mercado<ng-container *ngIf="hasMarket()"> &middot; {{ resultsTermLabel() }}</ng-container>
+        </div>
         <div class="row g-4 text-nowrap">
           <div class="col-6">
             <div class="glass-label mb-1">Desde</div>
             <div class="fs-2 fw-bold lh-1">
-              {{ (marketMin() || 0).toFixed(2) }}<span class="fs-5">%</span>
+              <ng-container *ngIf="hasMarket(); else noRate">{{ marketMin().toFixed(2) }}<span class="fs-5">%</span></ng-container>
             </div>
           </div>
           <div class="col-6">
             <div class="glass-label mb-1">Hasta</div>
             <div class="fs-2 fw-bold lh-1" style="color: #a7f3d0">
-              {{ (marketMax() || 0).toFixed(2) }}<span class="fs-5">%</span>
+              <ng-container *ngIf="hasMarket(); else noRate">{{ marketMax().toFixed(2) }}<span class="fs-5">%</span></ng-container>
             </div>
           </div>
         </div>
         <hr class="my-3" style="border-color: rgba(255, 255, 255, 0.14); opacity: 1" />
-        <div class="d-flex align-items-center gap-2 small" style="color: rgba(255, 255, 255, 0.65)">
+        <div class="d-flex align-items-center gap-2 small" style="color: rgba(255, 255, 255, 0.65); min-height: 3em">
           <i class="bi bi-info-circle"></i>
-          La diferencia entre elegir bien y elegir rapido puede ser millonaria.
+          <span id="simulator-market-hint" *ngIf="hasMarket(); else noMarketHint">
+            La diferencia entre elegir bien y elegir rapido puede ser millonaria.
+          </span>
+          <ng-template #noMarketHint>
+            <span id="simulator-market-hint">
+              {{ showResults() ? 'Ninguna entidad cubre ese monto y plazo.' : 'Simula para ver las tasas del mercado.' }}
+            </span>
+          </ng-template>
         </div>
       </div>
     </div>
@@ -59,13 +69,15 @@
           <span class="input-group-text">$</span>
           <input
             id="simulator-investment-amount"
-            [ngModel]="amount()"
-            (ngModelChange)="amount.set($event)"
-            type="number"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
             class="form-control text-center"
-            min="0"
-            step="100000"
             placeholder="5.000.000"
+            aria-label="Monto a invertir en pesos"
+            [attr.data-value]="amount()"
+            [value]="amountText()"
+            (input)="onAmountInput($event)"
           />
           <span class="input-group-text">COP</span>
         </div>
@@ -81,11 +93,26 @@
             [id]="'simulator-term-' + t.key"
             type="button"
             class="seg-item"
-            [class.active]="term() === t.key"
+            [class.active]="term() === t.key && !customText()"
             (click)="changeTerm(t.key)"
           >
             {{ t.label }}
           </button>
+          <label class="seg-custom" [class.active]="customText() !== ''" for="simulator-term-custom">
+            <input
+              id="simulator-term-custom"
+              type="number"
+              inputmode="numeric"
+              min="1"
+              step="1"
+              placeholder="Otro"
+              aria-label="Otro plazo en dias"
+              [ngModel]="customText()"
+              (ngModelChange)="onCustomTerm($event)"
+              (keydown.enter)="onSimulate()"
+            />
+            <span>dias</span>
+          </label>
         </div>
       </div>
 
@@ -134,7 +161,7 @@
       <h5 class="mb-1 fw-bold">{{ sortedResults().length }} entidades disponibles</h5>
       <div class="text-body-secondary small">
         Simulando <span class="fw-semibold">{{ formatCOP(amount() || 0) }}</span>
-        a <span class="fw-semibold">{{ selectedTermLabel() }}</span>
+        a <span class="fw-semibold">{{ resultsTermLabel() }}</span>
       </div>
     </div>
     <div class="d-flex align-items-center gap-2">
@@ -149,6 +176,14 @@
         <option value="safety">Mayor solidez</option>
       </select>
     </div>
+  </div>
+
+  <div id="simulator-no-results" *ngIf="sortedResults().length === 0" class="text-center py-4 my-2">
+    <div class="empty-state-icon mb-3"><i class="bi bi-search"></i></div>
+    <h5 class="fw-bold mb-2">Ninguna entidad cubre ese monto y plazo</h5>
+    <p class="text-body-secondary mb-0" style="max-width: 28rem; margin-inline: auto">
+      Prueba con un plazo mas largo o ajusta el monto. Cada entidad solo ofrece CDTs dentro de sus rangos.
+    </p>
   </div>
 
   <div id="simulator-results" class="row g-3">
@@ -211,8 +246,8 @@
               <span class="fw-bold"><app-animated-money [value]="row.final"></app-animated-money></span>
             </div>
             <div class="d-flex justify-content-between">
-              <span class="text-body-secondary">Inversion minima</span>
-              <span class="fw-semibold">{{ formatCOP(row.bank.min_amount) }}</span>
+              <span class="text-body-secondary">Calificacion</span>
+              <span class="fw-semibold">{{ row.bank.tier }} &middot; {{ row.bank.rating_by }}</span>
             </div>
           </div>
 

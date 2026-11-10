@@ -2,7 +2,7 @@
   <div class="spinner-border text-primary" role="status"></div>
 </div>
 
-<ng-container *ngIf="!loading() && detail() as d">
+<ng-container *ngIf="!loading() && process() as p">
   <!-- Header -->
   <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
     <div>
@@ -18,10 +18,10 @@
         </h3>
       </div>
     </div>
-    <div class="d-flex gap-2 flex-wrap">
-      <span class="badge text-bg-light border">{{ formatCOP(d.process.amount) }}</span>
-      <span class="badge text-bg-light border">{{ d.process.term_days }} dias</span>
-      <span class="badge text-bg-light border">{{ d.process.rate.toFixed(2) }}% E.A.</span>
+    <div class="d-flex gap-2 flex-wrap" id="process-header" [attr.data-stage]="p.stage">
+      <span class="badge text-bg-light border">{{ formatCOP(p.amount) }}</span>
+      <span class="badge text-bg-light border">{{ p.term }} dias</span>
+      <span class="badge text-bg-light border">{{ p.rate.toFixed(2) }}% E.A.</span>
     </div>
   </div>
 
@@ -39,35 +39,77 @@
   </div>
 
   <!-- Body card -->
-  <div class="card shadow-sm mx-auto" style="max-width: 720px">
-    <div class="card-body p-4 p-lg-5">
-      <!-- form -->
-      <ng-container *ngIf="stage() === 'form'">
+  <div id="process-card" class="card shadow-sm mx-auto process-card" [class.process-card-wide]="wideCard()">
+    <div class="card-body p-3 p-sm-4 p-lg-5">
+      <!-- ============================== FORM ============================== -->
+      <ng-container *ngIf="stage() === 'FORM'">
         <h5 class="fw-bold mb-1">Cuentanos de ti</h5>
         <p class="text-body-secondary small mb-4">
-          Necesitamos algunos datos para cumplir la debida diligencia y precalificarte con la entidad.
+          Necesitamos algunos datos para cumplir la debida diligencia y llenar tu orden de inversion.
         </p>
         <app-process-form id="process-stage-form" (saved)="onFormSaved()"></app-process-form>
+        <div *ngIf="savingForm()" class="small text-body-secondary mt-2">
+          <span class="spinner-border spinner-border-sm me-2"></span>Guardando en tu proceso...
+        </div>
       </ng-container>
 
-      <!-- documents -->
-      <ng-container *ngIf="stage() === 'documents'">
-        <h5 class="fw-bold mb-1">Carga tu declaracion de renta</h5>
-        <app-process-documents
-          id="process-stage-documents"
-          [processId]="d.process.id"
-          [files]="d.files"
-          (uploaded)="refresh()"
-        ></app-process-documents>
+      <!-- ============================ DOCUMENTS =========================== -->
+      <ng-container *ngIf="stage() === 'DOCUMENTS'">
+        <div id="process-stage-documents">
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+            <h5 class="fw-bold mb-0">Carga tus documentos</h5>
+            <button
+              id="process-documents-edit-form"
+              type="button"
+              class="btn btn-link btn-sm p-0 text-decoration-none"
+              [disabled]="waitingSignature()"
+              (click)="toggleEditForm()"
+            >
+              <i class="bi" [ngClass]="editingForm() ? 'bi-x-lg' : 'bi-pencil'"></i>
+              {{ editingForm() ? 'Cancelar' : 'Editar mis datos' }}
+            </button>
+          </div>
+
+          <ng-container *ngIf="editingForm(); else docs">
+            <p class="text-body-secondary small mb-4">
+              Al guardar, actualizamos tus datos en este proceso. Los documentos requeridos pueden cambiar.
+            </p>
+            <app-process-form submitLabel="Guardar cambios" (saved)="onFormSaved()"></app-process-form>
+          </ng-container>
+
+          <ng-template #docs>
+            <app-process-documents
+              [processId]="p.id"
+              (completeChange)="onDocsComplete($event)"
+            ></app-process-documents>
+
+            <div *ngIf="waitingSignature()" id="process-preparing-signature" class="alert alert-info py-2 small mt-3 mb-0">
+              <span class="spinner-border spinner-border-sm me-2"></span>
+              Estamos llenando tu orden de inversion y preparando la firma. Toma unos segundos.
+            </div>
+
+            <button
+              id="process-advance-documents"
+              class="btn btn-primary w-100 mt-4 py-2"
+              [disabled]="!docsComplete() || waitingSignature()"
+              (click)="continueToSignature()"
+            >
+              <span *ngIf="waitingSignature()" class="spinner-border spinner-border-sm me-2"></span>
+              Continuar a la firma
+              <i class="bi bi-arrow-right ms-2"></i>
+            </button>
+          </ng-template>
+        </div>
       </ng-container>
 
-      <!-- signature -->
-      <ng-container *ngIf="stage() === 'signature'">
-        <h5 id="process-stage-signature" class="fw-bold mb-1">Firma tu orden de inversion</h5>
+      <!-- ============================ SIGNATURE =========================== -->
+      <ng-container *ngIf="stage() === 'SIGNATURE'">
+        <h5 id="process-stage-signature" class="fw-bold mb-1" [attr.data-signature-cta]="signatureCta()">
+          Firma tu orden de inversion
+        </h5>
         <p class="text-body-secondary small mb-4">
-          Te enviaremos un enlace seguro a tu correo (y podes abrirlo aca mismo). Revisas el
-          documento, validas tu identidad con la camara y confirmas con un codigo de un solo uso.
-          Cuando termines te traemos de vuelta a este proceso.
+          Revisas el documento, confirmas tu correo, validas tu identidad con la camara, dibujas tu firma y
+          confirmas con un codigo que te llega al correo. Tienes 15 minutos desde que se abre la firma.
         </p>
         <div class="border rounded-3 p-3 mb-3 d-flex align-items-center gap-3" style="background: #faf9fe">
           <i class="bi bi-file-earmark-text fs-3" style="color: var(--brand)"></i>
@@ -76,8 +118,7 @@
               Orden de inversion<span *ngIf="bank() as b"> &middot; {{ b.name }}</span>
             </div>
             <div class="small text-body-secondary">
-              {{ formatCOP(d.process.amount) }} &middot; {{ d.process.term_days }} dias &middot;
-              {{ d.process.rate.toFixed(2) }}% E.A.
+              {{ formatCOP(p.amount) }} &middot; {{ p.term }} dias &middot; {{ p.rate.toFixed(2) }}% E.A.
             </div>
           </div>
         </div>
@@ -88,84 +129,78 @@
           <span><i class="bi bi-shield-lock me-1"></i>Codigo por correo</span>
         </div>
 
-        <!-- Info banner when the previous ceremony aborted. The button
-             below reopens a fresh one via advance(). -->
-        <div
-          *ngIf="signatureCta() === 'retry'"
-          class="alert alert-warning py-2 small mb-3"
-        >
+        <div id="process-signature-failed" *ngIf="signatureCta() === 'failed'" class="alert alert-warning py-2 small mb-3">
           <i class="bi bi-exclamation-triangle me-1"></i>
-          <ng-container *ngIf="d.signature?.stage === 'expired'">
-            La ceremonia anterior expiro. Comenzamos una nueva.
-          </ng-container>
-          <ng-container *ngIf="d.signature?.stage === 'failed'">
-            La ceremonia anterior fallo. Podes intentarlo de nuevo.
-          </ng-container>
+          La firma no se completo a tiempo o fue rechazada. Por ahora no podemos abrir una nueva desde aqui:
+          escribenos y te ayudamos a retomar tu proceso.
         </div>
 
-        <!-- Info banner while the worker is still crunching. The user
-             usually shouldn't land here because they were auto-redirected
-             to the signing SPA, but this covers the edge case of coming
-             back too early (before the callback fires). -->
-        <div
-          *ngIf="signatureCta() === 'processing'"
-          class="alert alert-info py-2 small mb-3"
-        >
+        <div id="process-signature-processing" *ngIf="signatureCta() === 'processing'" class="alert alert-info py-2 small mb-3">
           <span class="spinner-border spinner-border-sm me-2"></span>
-          Estamos firmando tu documento. Espera unos segundos y refresca.
+          Estamos sellando tu documento. Toma unos segundos.
+        </div>
+
+        <div id="process-signature-signed" *ngIf="signatureCta() === 'signed'" class="alert alert-success py-2 small mb-3">
+          <span class="spinner-border spinner-border-sm me-2"></span>
+          Tu firma quedo lista. Estamos habilitando el pago...
         </div>
 
         <button
+          *ngIf="signatureCta() === 'sign' || signatureCta() === 'resume'"
           id="process-signature-start"
           class="btn btn-primary w-100 py-2"
-          [disabled]="signing() || signatureCta() === 'processing'"
+          [disabled]="!p.signature_id"
           (click)="startSignature()"
         >
-          <span *ngIf="signing()" class="spinner-border spinner-border-sm me-2"></span>
-          <ng-container [ngSwitch]="signatureCta()">
-            <span *ngSwitchCase="'resume'">Continuar mi firma</span>
-            <span *ngSwitchCase="'retry'">Reabrir ceremonia</span>
-            <span *ngSwitchCase="'processing'">Firmando...</span>
-            <span *ngSwitchDefault>Firmar ahora</span>
-          </ng-container>
-          <i *ngIf="signatureCta() !== 'processing'" class="bi bi-arrow-right ms-2"></i>
+          {{ signatureCta() === 'resume' ? 'Continuar mi firma' : 'Firmar ahora' }}
+          <i class="bi bi-arrow-right ms-2"></i>
         </button>
       </ng-container>
 
-      <!-- payment (mocked) -->
-      <ng-container *ngIf="stage() === 'payment'">
+      <!-- ============================= PAYMENT ============================ -->
+      <ng-container *ngIf="stage() === 'PAYMENT'">
         <h5 id="process-stage-payment" class="fw-bold mb-1">Fondea tu CDT</h5>
         <p class="text-body-secondary small mb-4">
-          Elige como transferir {{ formatCOP(d.process.amount) }}. El pago tambien esta simulado por ahora.
+          Tu orden de inversion ya esta firmada. Solo falta transferir {{ formatCOP(p.amount) }}.
         </p>
-        <div class="upload-box mb-3 uploaded d-flex align-items-center gap-3">
-          <i class="bi bi-lightning-charge fs-3"></i>
-          <div>
-            <div class="fw-semibold">PSE</div>
-            <div class="small text-body-secondary">Debito inmediato desde tu banco</div>
-          </div>
-        </div>
+        <app-process-payment
+          [processId]="p.id"
+          [bankName]="bank()?.name ?? null"
+          (stageChange)="onPaymentStageChange($event)"
+        ></app-process-payment>
       </ng-container>
 
-      <!-- done -->
-      <ng-container *ngIf="stage() === 'done'">
-        <div id="process-stage-done" class="text-center">
+      <!-- ===================== REVIEW / SENT_TO_BANK / COMPLETED ============ -->
+      <ng-container *ngIf="isFinal()">
+        <div id="process-stage-done" class="text-center" [attr.data-stage]="p.stage">
           <div
             class="empty-state-icon mb-3"
             style="background: linear-gradient(135deg, #dcfce7, #d1fae5); color: #059669"
           >
-            <i class="bi bi-check-lg"></i>
+            <i class="bi" [ngClass]="p.stage === 'COMPLETED' ? 'bi-check-lg' : 'bi-hourglass-split'"></i>
           </div>
-          <h4 class="fw-bolder mb-2">Tu CDT esta activo</h4>
-          <p class="text-body-secondary mb-4">Tu inversion ya esta trabajando por ti.</p>
+          <ng-container [ngSwitch]="p.stage">
+            <ng-container *ngSwitchCase="'COMPLETED'">
+              <h4 class="fw-bolder mb-2">Tu CDT esta activo</h4>
+              <p class="text-body-secondary mb-4">Tu inversion ya esta trabajando por ti.</p>
+            </ng-container>
+            <ng-container *ngSwitchCase="'SENT_TO_BANK'">
+              <h4 class="fw-bolder mb-2">Enviamos tu CDT al banco</h4>
+              <p class="text-body-secondary mb-4">La entidad esta constituyendo tu CDT. Te avisaremos cuando quede activo.</p>
+            </ng-container>
+            <ng-container *ngSwitchDefault>
+              <h4 class="fw-bolder mb-2">Recibimos tu pago</h4>
+              <p class="text-body-secondary mb-4">Estamos verificando tu pago antes de enviar el CDT a la entidad.</p>
+            </ng-container>
+          </ng-container>
           <div class="border rounded-3 p-4 text-start mb-4" style="background: #faf9fe">
             <div class="d-flex justify-content-between mb-2">
               <span class="text-body-secondary">Invertiste</span>
-              <span class="fw-bold">{{ formatCOP(d.process.amount) }}</span>
+              <span class="fw-bold">{{ formatCOP(p.amount) }}</span>
             </div>
             <div class="d-flex justify-content-between mb-2">
               <span class="text-body-secondary">Plazo &middot; Tasa</span>
-              <span class="fw-bold">{{ d.process.term_days }} dias &middot; {{ d.process.rate.toFixed(2) }}% E.A.</span>
+              <span class="fw-bold">{{ p.term }} dias &middot; {{ p.rate.toFixed(2) }}% E.A.</span>
             </div>
             <div class="d-flex justify-content-between mb-2">
               <span class="text-body-secondary">Ganaras</span>
@@ -181,23 +216,6 @@
       </ng-container>
 
       <div id="process-error" *ngIf="error()" class="alert alert-danger mt-3 py-2 small mb-0">{{ error() }}</div>
-
-      <!-- Advance CTA. `form` is advanced by the sub-component, `signature` by
-           the ceremony itself, and `done` has nothing left to do. -->
-      <button
-        *ngIf="stage() === 'documents' || stage() === 'payment'"
-        [id]="'process-advance-' + stage()"
-        class="btn btn-primary w-100 mt-4 py-2"
-        [disabled]="advancing()"
-        (click)="advance()"
-      >
-        <span *ngIf="advancing()" class="spinner-border spinner-border-sm me-2"></span>
-        <ng-container [ngSwitch]="stage()">
-          <span *ngSwitchCase="'documents'">Continuar a la firma</span>
-          <span *ngSwitchCase="'payment'">Pagar {{ formatCOP(d.process.amount) }} (simulado)</span>
-        </ng-container>
-        <i class="bi bi-arrow-right ms-2"></i>
-      </button>
     </div>
   </div>
 </ng-container>

@@ -1,6 +1,6 @@
 import { Router } from '@angular/router';
 
-import { PENDING_CDT_KEY, PendingCdtIntent } from './pending-cdt';
+import { PENDING_CDT_KEY, parsePendingCdt } from './pending-cdt';
 import { ProcessesService } from './processes.service';
 
 /**
@@ -12,22 +12,14 @@ export function completePostAuthRedirect(
   router: Router,
   processesApi: ProcessesService,
 ): void {
-  const raw = localStorage.getItem(PENDING_CDT_KEY);
-  if (!raw) {
-    router.navigate(['/me']);
-    return;
-  }
-  let intent: PendingCdtIntent;
-  try {
-    intent = JSON.parse(raw);
-  } catch {
-    localStorage.removeItem(PENDING_CDT_KEY);
-    router.navigate(['/me']);
-    return;
-  }
+  const intent = parsePendingCdt(localStorage.getItem(PENDING_CDT_KEY));
   localStorage.removeItem(PENDING_CDT_KEY);
+  if (!intent) {
+    router.navigate(['/me']);
+    return;
+  }
   processesApi.create(intent).subscribe({
-    next: (r) => router.navigate(['/process', r.process.id]),
+    next: (p) => router.navigate(['/process', p.id]),
     error: () => router.navigate(['/me']),
   });
 }

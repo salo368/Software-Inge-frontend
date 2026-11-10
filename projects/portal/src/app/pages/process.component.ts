@@ -1,19 +1,31 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
+import {
+  Component,
+  OnDestroy,
+  OnInit,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { Observable, switchMap } from 'rxjs';
 
 import { AnimatedMoneyComponent } from '@shared/components/animated-money.component';
-import { BanksService, Bank } from '@shared/core/banks.service';
+import { AuthService } from '@shared/core/auth.service';
+import { Bank, BanksService } from '@shared/core/banks.service';
 import { blockUrl } from '@shared/core/blocks';
 import { formatCOP } from '@shared/core/format';
 import {
-  ProcessDetail,
-  ProcessesService,
+  ProcessRow,
   ProcessStage,
-  STAGE_ORDER,
+  ProcessesService,
+  projectedInterest,
 } from '@shared/core/processes.service';
+import { SignatureStage, SignatureStatusService } from '@shared/core/signature-status.service';
 import { ProcessDocumentsComponent } from './process/process-documents.component';
 import { ProcessFormComponent } from './process/process-form.component';
+import { ProcessPaymentComponent } from './process/process-payment.component';
 
 interface Step {
   key: ProcessStage;
@@ -22,12 +34,50 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { key: 'form', label: 'Tus datos', icon: 'bi-person-vcard' },
-  { key: 'documents', label: 'Documentos', icon: 'bi-file-earmark-arrow-up' },
-  { key: 'signature', label: 'Firma', icon: 'bi-vector-pen' },
-  { key: 'payment', label: 'Pago', icon: 'bi-credit-card' },
-  { key: 'done', label: 'Listo', icon: 'bi-check-circle' },
+  { key: 'FORM', label: 'Tus datos', icon: 'bi-person-vcard' },
+  { key: 'DOCUMENTS', label: 'Documentos', icon: 'bi-file-earmark-arrow-up' },
+  { key: 'SIGNATURE', label: 'Firma', icon: 'bi-vector-pen' },
+  { key: 'PAYMENT', label: 'Pago', icon: 'bi-credit-card' },
+  { key: 'REVIEW', label: 'Revision', icon: 'bi-check-circle' },
 ];
+
+/** Stages rendered by the final "done" card. */
+const FINAL_STAGES: readonly ProcessStage[] = ['REVIEW', 'SENT_TO_BANK', 'COMPLETED'];
+
+const POLL_MS = 3000;
+/** generate_sign fills the PDF, downloads it and opens the signature: a few seconds, more on cold start. */
+const WAIT_FOR_SIGNATURE_MS = 120_000;
+/** The signed webhook is async but immediate; this only covers a slow cold start. */
+const WAIT_FOR_PAYMENT_MS = 90_000;
+
+/**
+ * What the signature step shows, derived from the signature's own stage:
+ *
+ *   sign        ceremony opened, nothing done yet
+ *   resume      signer already started (email, photos, drawing or OTP)
+ *   processing  OTP accepted, sign_doc is sealing the PDF
+ *   signed      SIGNED; waiting for the webhook to move the process to PAYMENT
+ *   failed      FAILED (3 bad OTPs, timeout) or the 15 min window expired.
+ *               The backend has no reopen yet, so this is terminal.
+ */
+export type SignatureCta = 'sign' | 'resume' | 'processing' | 'signed' | 'failed';
+
+export function signatureCtaFor(stage: SignatureStage | 'EXPIRED' | null): SignatureCta {
+  switch (stage) {
+    case null:
+    case 'FORM':
+      return 'sign';
+    case 'SIGNING':
+      return 'processing';
+    case 'SIGNED':
+      return 'signed';
+    case 'FAILED':
+    case 'EXPIRED':
+      return 'failed';
+    default:
+      return 'resume';
+  }
+}
 
 @Component({
   selector: 'app-process',
@@ -38,85 +88,79 @@ const STEPS: Step[] = [
     AnimatedMoneyComponent,
     ProcessFormComponent,
     ProcessDocumentsComponent,
+    ProcessPaymentComponent,
   ],
   templateUrl: './process.component.html',
 })
-export class ProcessComponent implements OnInit {
+export class ProcessComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private auth = inject(AuthService);
   private processesApi = inject(ProcessesService);
   private banksApi = inject(BanksService);
+  private signaturesApi = inject(SignatureStatusService);
 
   readonly STEPS = STEPS;
   readonly formatCOP = formatCOP;
 
-  detail = signal<ProcessDetail | null>(null);
+  process = signal<ProcessRow | null>(null);
   bank = signal<Bank | null>(null);
   loading = signal(true);
-  advancing = signal(false);
-  signing = signal(false);
   error = signal<string | null>(null);
 
-  /**
-   * True once we auto-advanced signature -> payment after the user
-   * came back from the signing SPA with a signed ceremony. Prevents
-   * the effect from firing twice if the component re-renders.
-   */
-  private autoAdvancedAfterSign = false;
+  /** FORM -> DOCUMENTS (`set-process-form`) in flight. */
+  savingForm = signal(false);
+  /** DOCUMENTS: user reopened the form to correct it. */
+  editingForm = signal(false);
+  docsComplete = signal(false);
+  /** DOCUMENTS -> SIGNATURE: waiting for generate_sign to open the signature. */
+  waitingSignature = signal(false);
 
-  readonly stage = computed<ProcessStage>(() => this.detail()?.process.stage ?? 'form');
-  readonly stageIndex = computed(() => STAGE_ORDER.indexOf(this.stage()));
+  signatureStage = signal<SignatureStage | 'EXPIRED' | null>(null);
 
-  /**
-   * State of the signature button on the `signature` step. Three
-   * shapes: no ceremony yet or resumable one (default action), the
-   * worker is still crunching (locked), or the previous ceremony
-   * failed/expired and the next click will reopen a fresh one.
-   */
-  readonly signatureCta = computed<
-    'sign' | 'resume' | 'processing' | 'retry'
-  >(() => {
-    const sig = this.detail()?.signature;
-    if (!sig) return 'sign';
-    switch (sig.stage) {
-      case 'signing':
-        return 'processing';
-      case 'failed':
-      case 'expired':
-        return 'retry';
-      case 'signed':
-        // We shouldn't render the CTA in this state; the auto-advance
-        // effect will have moved the process to `payment` already.
-        // Fall back to sign in case someone lands here.
-        return 'sign';
-      default:
-        return 'resume';
-    }
+  private timer: number | null = null;
+  private waitStartedAt = 0;
+
+  readonly stage = computed<ProcessStage>(() => this.process()?.stage ?? 'FORM');
+  readonly isFinal = computed(() => FINAL_STAGES.includes(this.stage()));
+  /** The KYC form needs room (4 columns on desktop); every other step reads better narrow. */
+  readonly wideCard = computed(
+    () => this.stage() === 'FORM' || (this.stage() === 'DOCUMENTS' && this.editingForm()),
+  );
+  readonly stageIndex = computed(() => {
+    const s = this.stage();
+    if (s === 'SENT_TO_BANK' || s === 'COMPLETED') return STEPS.length;
+    return STEPS.findIndex((step) => step.key === s);
   });
+  readonly signatureCta = computed(() => signatureCtaFor(this.signatureStage()));
   readonly interest = computed(() => {
-    const p = this.detail()?.process;
-    if (!p) return 0;
-    const factor = Math.pow(1 + p.rate / 100, p.term_days / 365) - 1;
-    return Math.round(p.amount * factor);
+    const p = this.process();
+    return p ? projectedInterest(p) : 0;
   });
-  readonly finalAmount = computed(() => {
-    const p = this.detail()?.process;
-    if (!p) return 0;
-    return p.amount + this.interest();
-  });
+  readonly finalAmount = computed(() => (this.process()?.amount ?? 0) + this.interest());
 
   ngOnInit(): void {
-    const id = this.route.snapshot.paramMap.get('id')!;
-    this.load(id);
+    this.load(this.route.snapshot.paramMap.get('id')!);
   }
 
-  load(id: string): void {
+  ngOnDestroy(): void {
+    this.stopTimer();
+  }
+
+  // ---------------------------------------------------------------------
+  // Loading
+  // ---------------------------------------------------------------------
+
+  private load(id: string): void {
     this.processesApi.get(id).subscribe({
-      next: (d) => {
-        this.detail.set(d);
+      next: (p) => {
+        if (!p) {
+          this.router.navigate(['/me']);
+          return;
+        }
+        this.apply(p);
         this.loading.set(false);
-        this.loadBank(d.process.bank_id);
-        this.maybeAutoAdvanceAfterSigning(d);
+        this.loadBank(p.bank_id);
       },
       error: () => {
         this.loading.set(false);
@@ -125,23 +169,20 @@ export class ProcessComponent implements OnInit {
     });
   }
 
-  /**
-   * When the user returns from the signing SPA after a successful
-   * ceremony, the process is still at stage=`signature` but the
-   * embedded `signature.stage` is already `signed` (the callback wrote
-   * it back). We advance to `payment` on their behalf so they land on
-   * the payment screen instead of re-clicking "Firmar ahora".
-   *
-   * We only do this once per component lifetime (see
-   * `autoAdvancedAfterSign`) to avoid an accidental loop if
-   * `advance()` returns quickly and triggers another load.
-   */
-  private maybeAutoAdvanceAfterSigning(d: ProcessDetail): void {
-    if (this.autoAdvancedAfterSign) return;
-    if (d.process.stage !== 'signature') return;
-    if (d.signature?.stage !== 'signed') return;
-    this.autoAdvancedAfterSign = true;
-    this.advance();
+  private apply(p: ProcessRow): void {
+    const prevStage = this.process()?.stage;
+    this.process.set(p);
+    if (prevStage === p.stage) return;
+    this.stopTimer();
+    this.waitingSignature.set(false);
+    this.editingForm.set(false);
+    if (p.stage === 'SIGNATURE') this.checkSignature();
+  }
+
+  private reload(): void {
+    const p = this.process();
+    if (!p) return;
+    this.processesApi.get(p.id).subscribe({ next: (fresh) => fresh && this.apply(fresh) });
   }
 
   private loadBank(bankId: number): void {
@@ -151,127 +192,192 @@ export class ProcessComponent implements OnInit {
     });
   }
 
-  refresh(): void {
-    const d = this.detail();
-    if (!d) return;
-    this.processesApi.get(d.process.id).subscribe({
-      next: (fresh) => this.detail.set(fresh),
-    });
-  }
+  // ---------------------------------------------------------------------
+  // FORM (and DOCUMENTS edit)
+  // ---------------------------------------------------------------------
 
-  advance(): void {
-    const d = this.detail();
-    if (!d || this.advancing()) return;
-    this.advancing.set(true);
-    this.error.set(null);
-    this.processesApi.advance(d.process.id).subscribe({
-      next: (r) => {
-        this.detail.update((cur) => (cur ? { ...cur, process: r.process } : cur));
-        this.advancing.set(false);
-      },
-      error: (err) => {
-        this.advancing.set(false);
-        this.error.set(this.friendlyError(err?.error?.error));
-      },
-    });
-  }
-
+  /** The form was upserted; snapshot it into the process. */
   onFormSaved(): void {
-    // Form was upserted; advance the process out of the `form` stage.
-    this.advance();
+    const p = this.process();
+    if (!p || this.savingForm()) return;
+    this.savingForm.set(true);
+    this.error.set(null);
+    this.processesApi.setForm(p.id).subscribe({
+      next: (r) => {
+        this.savingForm.set(false);
+        // Leaving edit mode re-mounts the documents list, which re-reads the
+        // requirements (they may change with is_pep / is_tax_declarant).
+        this.editingForm.set(false);
+        this.docsComplete.set(false);
+        this.process.update((cur) => (cur ? { ...cur, stage: r.stage } : cur));
+      },
+      error: (err: HttpErrorResponse) => {
+        this.savingForm.set(false);
+        this.error.set(friendlyError(err?.error?.error));
+      },
+    });
+  }
+
+  toggleEditForm(): void {
+    this.editingForm.update((v) => !v);
+    this.docsComplete.set(false);
+  }
+
+  // ---------------------------------------------------------------------
+  // DOCUMENTS -> SIGNATURE
+  // ---------------------------------------------------------------------
+
+  onDocsComplete(complete: boolean): void {
+    this.docsComplete.set(complete);
   }
 
   /**
-   * Sends the user to the signing SPA. Two entry paths, both handled
-   * here:
-   *
-   *   1. First time (process still at `documents`, or at `signature`
-   *      but no ceremony yet -- shouldn't happen in v2 but we
-   *      tolerate it): call POST /processes/{id}/advance. The
-   *      backend opens the ceremony server-side and returns
-   *      `sign_url`. The browser NEVER calls the signatures API
-   *      directly -- that endpoint is gated by an M2M service key.
-   *
-   *   2. Resume (process already at `signature`, ceremony exists but
-   *      not yet `signed`): reuse the embedded `signature.sign_id`
-   *      and jump straight to the signing SPA without any API call.
-   *
-   * Either way we append `?return_url=<current>` so the signing SPA
-   * knows where to send the user back after the ceremony ends.
+   * `get-required-files` is what fires generate_sign (and retries it while
+   * the process stays in DOCUMENTS), so each tick calls it before re-reading
+   * the process, until the process reaches SIGNATURE with a `signature_id`.
    */
-  startSignature(): void {
-    const d = this.detail();
-    if (!d || this.signing()) return;
+  continueToSignature(): void {
+    const p = this.process();
+    if (!p || !this.docsComplete() || this.waitingSignature()) return;
+    this.waitingSignature.set(true);
+    this.error.set(null);
+    this.waitStartedAt = Date.now();
+    this.pollUntil(
+      () =>
+        this.processesApi
+          .requiredFiles(p.id)
+          .pipe(switchMap(() => this.processesApi.get(p.id))),
+      (fresh) => !!fresh && fresh.stage !== 'DOCUMENTS',
+      WAIT_FOR_SIGNATURE_MS,
+      () => {
+        this.waitingSignature.set(false);
+        this.error.set(
+          'Estamos tardando en preparar tu orden de inversion. Intenta de nuevo en unos segundos.',
+        );
+      },
+    );
+  }
 
-    const pending = d.signature;
-    if (pending && pending.stage !== 'signed') {
-      this.goToSigning(pending.sign_id);
+  // ---------------------------------------------------------------------
+  // SIGNATURE
+  // ---------------------------------------------------------------------
+
+  private checkSignature(): void {
+    const p = this.process();
+    if (!p?.signature_id) {
+      this.signatureStage.set(null);
       return;
     }
-
-    this.signing.set(true);
-    this.error.set(null);
-    this.processesApi.advance(d.process.id).subscribe({
-      next: (r) => {
-        this.signing.set(false);
-        this.detail.update((cur) => (cur ? { ...cur, process: r.process } : cur));
-        if (r.sign_url) {
-          this.goToSigningUrl(r.sign_url);
-          return;
-        }
-        // No sign_url in the response means the backend advanced us
-        // past `signature` (e.g. the ceremony was already signed and
-        // we were racing another tab). Refresh so the UI catches up.
-        this.refresh();
+    this.signaturesApi.get(p.signature_id).subscribe({
+      next: (s) => {
+        this.signatureStage.set(s.stage);
+        if (s.stage === 'SIGNED') this.waitForPayment();
+        else if (s.stage === 'SIGNING') this.retryLater(() => this.checkSignature());
       },
-      error: (err) => {
-        this.signing.set(false);
-        this.error.set(this.friendlyError(err?.error?.error));
+      error: (err: HttpErrorResponse) => {
+        if (err.status === 410) this.signatureStage.set('EXPIRED');
+        else this.signatureStage.set(null);
       },
     });
   }
 
-  /**
-   * Redirects to the signing SPA using a known sign_id (resume flow).
-   * The signing block lives at `/sign/{sign_id}` under the same
-   * CloudFront distribution, so this is a plain document navigation.
-   */
-  private goToSigning(signId: string): void {
-    const target = blockUrl('signing', signId);
-    this.goToSigningUrl(target);
+  /** SIGNED: the `signed` webhook moves the process to PAYMENT asynchronously. */
+  private waitForPayment(): void {
+    const p = this.process();
+    if (!p) return;
+    this.waitStartedAt = Date.now();
+    this.pollUntil(
+      () => this.processesApi.get(p.id),
+      (fresh) => !!fresh && fresh.stage !== 'SIGNATURE',
+      WAIT_FOR_PAYMENT_MS,
+      () => this.error.set('Tu firma quedo lista. Recarga la pagina para continuar con el pago.'),
+    );
   }
 
   /**
-   * Redirects to a fully-qualified signing URL (as returned by the
-   * backend's `advance` response). Appends `?return_url` pointing at
-   * the current portal URL so the SPA can send the user back exactly
-   * where they were. Preserves any query string the backend already
-   * put on the URL.
+   * Sends the signer to the signing block (`/sign/{signature_id}`), a plain
+   * document navigation under the same CloudFront domain. `return_url`
+   * brings them back here; `email` pre-fills the signer's email.
    */
-  private goToSigningUrl(signUrl: string): void {
-    const sep = signUrl.includes('?') ? '&' : '?';
-    const returnUrl = encodeURIComponent(window.location.href);
-    window.location.assign(`${signUrl}${sep}return_url=${returnUrl}`);
+  startSignature(): void {
+    const p = this.process();
+    if (!p?.signature_id) return;
+    const params = new URLSearchParams({ return_url: window.location.href });
+    const email = this.auth.user()?.email;
+    if (email) params.set('email', email);
+    window.location.assign(`${blockUrl('signing', p.signature_id)}?${params.toString()}`);
   }
 
-  private friendlyError(code: string | undefined): string {
-    switch (code) {
-      case 'form_required':
-        return 'Completa el formulario antes de continuar.';
-      case 'declaracion_renta_required':
-        return 'Debes cargar la declaracion de renta antes de continuar.';
-      case 'signature_required':
-        return 'Debes firmar la orden de inversion antes de continuar.';
-      case 'process_not_in_signature_stage':
-        return 'Este proceso ya no esta en la etapa de firma.';
-      default:
-        // Errors bubbling up from the signatures service arrive
-        // prefixed with `signature_bridge_` (see processes/advance
-        // handler). Present them as a transient upstream failure.
-        if (code?.startsWith('signature_bridge_')) {
-          return 'No pudimos abrir la ceremonia de firma. Intenta de nuevo en unos segundos.';
-        }
-        return 'No pudimos continuar. Intenta de nuevo en unos segundos.';
+  // ---------------------------------------------------------------------
+  // PAYMENT
+  // ---------------------------------------------------------------------
+
+  onPaymentStageChange(stage: ProcessStage): void {
+    if (stage !== 'PAYMENT') this.reload();
+  }
+
+  // ---------------------------------------------------------------------
+  // Polling helpers
+  // ---------------------------------------------------------------------
+
+  private pollUntil(
+    fetch: () => Observable<ProcessRow | null>,
+    done: (p: ProcessRow | null) => boolean,
+    timeoutMs: number,
+    onTimeout: () => void,
+  ): void {
+    this.stopTimer();
+    const tick = () => {
+      this.timer = null;
+      fetch().subscribe({
+        next: (fresh) => {
+          if (done(fresh) && fresh) {
+            this.apply(fresh);
+            return;
+          }
+          if (Date.now() - this.waitStartedAt > timeoutMs) {
+            onTimeout();
+            return;
+          }
+          this.timer = window.setTimeout(tick, POLL_MS);
+        },
+        // A transient failure doesn't end the wait: retry on the next tick.
+        error: () => {
+          if (Date.now() - this.waitStartedAt > timeoutMs) onTimeout();
+          else this.timer = window.setTimeout(tick, POLL_MS);
+        },
+      });
+    };
+    tick();
+  }
+
+  private retryLater(fn: () => void): void {
+    this.stopTimer();
+    this.timer = window.setTimeout(() => {
+      this.timer = null;
+      fn();
+    }, POLL_MS);
+  }
+
+  private stopTimer(): void {
+    if (this.timer !== null) {
+      window.clearTimeout(this.timer);
+      this.timer = null;
     }
+  }
+}
+
+function friendlyError(code: string | undefined): string {
+  switch (code) {
+    case 'form_required':
+      return 'Completa el formulario antes de continuar.';
+    case 'process_form_locked':
+      return 'Tus datos ya estan en la orden de inversion y no se pueden cambiar.';
+    case 'process_not_found':
+      return 'No encontramos este proceso.';
+    case 'form_lookup_unavailable':
+      return 'No pudimos leer tu formulario. Intenta de nuevo en unos segundos.';
+    default:
+      return 'No pudimos continuar. Intenta de nuevo en unos segundos.';
   }
 }

@@ -1,39 +1,63 @@
 <p class="text-body-secondary small mb-4">
-  Cargamos tus documentos de forma segura y los verificamos automaticamente.
-  Aceptamos PDF, JPG o PNG.
+  Segun tus datos, la entidad necesita estos documentos. Los guardamos de forma segura.
+  Aceptamos PDF, JPG o PNG de hasta 10 MB.
 </p>
 
-<label id="process-documents-upload" class="upload-box" [class.uploaded]="declaracion" [class.opacity-75]="uploading()">
-  <input
-    id="process-documents-input"
-    type="file"
-    class="d-none"
-    accept="application/pdf,image/jpeg,image/png"
-    [disabled]="uploading()"
-    (change)="onFileChange($event)"
-  />
-  <i
-    class="bi"
-    [class.bi-cloud-arrow-up]="!declaracion && !uploading()"
-    [class.bi-hourglass-split]="uploading()"
-    [class.bi-check-circle-fill]="declaracion && !uploading()"
-  ></i>
-  <div class="flex-grow-1">
-    <div class="fw-semibold">Declaracion de renta</div>
-    <div id="process-documents-progress" class="small text-body-secondary" *ngIf="uploading()">{{ progressMsg() }}</div>
-    <div id="process-documents-empty" class="small text-body-secondary" *ngIf="!uploading() && !declaracion">
-      Ultimo periodo disponible. PDF preferentemente.
-    </div>
-    <div id="process-documents-file" class="small text-body-secondary" *ngIf="!uploading() && declaracion">
-      {{ declaracion.original_name || 'Documento cargado' }} &middot; toca para reemplazar
-    </div>
-  </div>
-</label>
-
-<div id="process-documents-actions" *ngIf="declaracion && !uploading()" class="text-end mt-2">
-  <button id="process-documents-view" type="button" class="btn btn-sm btn-outline-primary" (click)="openFile()">
-    <i class="bi bi-eye me-1"></i>Ver documento
-  </button>
+<div id="process-documents-loading" *ngIf="loading()" class="text-center py-3">
+  <div class="spinner-border text-primary" role="status"></div>
 </div>
 
-<div id="process-documents-error" *ngIf="error()" class="alert alert-danger py-2 small mt-3 mb-0">{{ error() }}</div>
+<div id="process-documents-load-error" *ngIf="loadError()" class="alert alert-danger py-2 small">{{ loadError() }}</div>
+
+<div id="process-documents-list" *ngIf="!loading() && !loadError()">
+  <div
+    *ngFor="let d of rows()"
+    class="mb-3"
+    [id]="'process-documents-row-' + d.slug"
+    [attr.data-file-type]="d.type"
+    [attr.data-uploaded]="d.uploaded"
+  >
+    <label
+      [id]="'process-documents-upload-' + d.slug"
+      class="upload-box"
+      [class.uploaded]="d.uploaded"
+      [class.opacity-75]="d.uploading"
+    >
+      <input
+        [id]="'process-documents-input-' + d.slug"
+        type="file"
+        class="d-none"
+        [accept]="ACCEPT"
+        [disabled]="d.uploading"
+        (change)="onFileChange(d, $event)"
+      />
+      <i
+        class="bi"
+        [ngClass]="d.uploading ? 'bi-hourglass-split' : d.uploaded ? 'bi-check-circle-fill' : 'bi-cloud-arrow-up'"
+      ></i>
+      <div class="flex-grow-1">
+        <div class="fw-semibold">{{ d.label }}</div>
+        <div [id]="'process-documents-progress-' + d.slug" class="small text-body-secondary" *ngIf="d.uploading">
+          Subiendo y registrando...
+        </div>
+        <div [id]="'process-documents-empty-' + d.slug" class="small text-body-secondary" *ngIf="!d.uploading && !d.uploaded">
+          {{ d.hint }}
+        </div>
+        <div [id]="'process-documents-file-' + d.slug" class="small text-body-secondary" *ngIf="!d.uploading && d.uploaded">
+          {{ d.fileName || 'Documento cargado' }} &middot; toca para reemplazar
+        </div>
+      </div>
+    </label>
+    <div
+      [id]="'process-documents-error-' + d.slug"
+      *ngIf="d.error"
+      class="alert alert-danger py-2 small mt-2 mb-0"
+    >
+      {{ d.error }}
+    </div>
+  </div>
+
+  <div id="process-documents-complete" *ngIf="complete()" class="small text-success fw-semibold">
+    <i class="bi bi-check2-all me-1"></i>Tienes todos los documentos.
+  </div>
+</div>
