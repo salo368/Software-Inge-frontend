@@ -1,0 +1,110 @@
+:host { display: block; }
+
+.combo { position: relative; }
+.combo-box { position: relative; }
+
+.combo-input {
+  padding-right: 2.5rem;
+  text-overflow: ellipsis;
+}
+
+/* Flag (or any icon) of the chosen option, inside the closed field. */
+.combo-flag {
+  position: absolute;
+  top: 50%;
+  left: 0.75rem;
+  transform: translateY(-50%);
+  font-size: 1.05rem;
+  pointer-events: none;
+  z-index: 1;
+}
+.combo-input.has-icon { padding-left: 2.6rem; }
+
+/* Not searchable: it reads as a select, not as a text box. */
+.combo-select { cursor: pointer; caret-color: transparent; user-select: none; }
+.combo-select::selection { background: transparent; }
+
+.combo-chevron {
+  position: absolute;
+  top: 50%;
+  right: 0.3rem;
+  transform: translateY(-50%);
+  width: 2.1rem;
+  height: 2.1rem;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  color: #4c1d95;
+  cursor: pointer;
+}
+.combo-chevron:hover:not(:disabled) { background: #ede9fe; }
+.combo-chevron i { transition: transform 0.15s ease; font-size: 0.85rem; }
+.combo.open .combo-chevron i { transform: rotate(180deg); }
+
+/* ---------------------------------------------------------------- panel */
+.combo-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  z-index: 1075;
+  /* Fixed ceiling (about 6 rows): long lists scroll instead of growing. */
+  max-height: 15.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.35rem;
+  background: #fff;
+  border: 1px solid #c4b8ee;
+  border-radius: 0.9rem;
+  box-shadow: 0 18px 40px rgba(23, 20, 58, 0.22);
+  animation: combo-pop 0.12s ease-out;
+}
+@keyframes combo-pop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.combo-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.6rem;
+  font-size: 0.95rem;
+  color: #17143a;
+  cursor: pointer;
+}
+.combo-option.active { background: #ede9fe; }
+.combo-option.selected { font-weight: 700; color: #4c1d95; }
+.combo-icon { font-size: 1rem; }
+.combo-hint { margin-left: auto; padding-left: 0.5rem; color: #5b5978; font-size: 0.85rem; font-variant-numeric: tabular-nums; flex: none; }
+.combo-option.selected .combo-hint { color: #4c1d95; }
+.combo-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-check { color: #6d28d9; flex: none; }
+
+/* The part of the label that matches what was typed. */
+mark {
+  padding: 0 0.05rem;
+  border-radius: 0.2rem;
+  background: #e4d8fd;
+  color: #4c1d95;
+  font-weight: 800;
+}
+
+.combo-empty,
+.combo-more {
+  padding: 0.65rem 0.7rem;
+  font-size: 0.85rem;
+  color: #5b5978;
+}
+.combo-more {
+  position: sticky;
+  bottom: -0.35rem;
+  margin: 0.2rem -0.35rem -0.35rem;
+  background: #f6f3ff;
+  border-top: 1px dashed #d9d3f3;
+  font-weight: 600;
+}

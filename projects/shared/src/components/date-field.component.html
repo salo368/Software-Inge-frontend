@@ -1,0 +1,83 @@
+<div class="date-field" (keydown.escape)="open() && close(true)">
+  <div class="input-group">
+    <input
+      [id]="inputId || null"
+      type="text"
+      inputmode="numeric"
+      autocomplete="off"
+      class="form-control"
+      [class.is-invalid]="showInvalid()"
+      [placeholder]="placeholder"
+      [value]="text()"
+      [disabled]="disabled()"
+      [attr.aria-invalid]="showInvalid() ? 'true' : null"
+      (input)="onInput($event)"
+      (blur)="onBlur()"
+    />
+    <button
+      type="button"
+      class="btn date-field-toggle"
+      [id]="inputId ? inputId + '-toggle' : null"
+      aria-label="Abrir calendario"
+      aria-haspopup="dialog"
+      [attr.aria-expanded]="open()"
+      [disabled]="disabled()"
+      (click)="toggle()"
+    >
+      <i class="bi bi-calendar3"></i>
+    </button>
+  </div>
+
+  <div *ngIf="error()" class="date-field-error">{{ error() }}</div>
+
+  <div
+    *ngIf="open()"
+    class="date-popover"
+    [id]="inputId ? inputId + '-calendar' : null"
+    role="dialog"
+    aria-label="Elegir fecha"
+  >
+    <div class="date-popover-head">
+      <button type="button" class="date-nav" aria-label="Mes anterior" [disabled]="!canPrev()" (click)="prevMonth()">
+        <i class="bi bi-chevron-left"></i>
+      </button>
+      <select class="date-select date-select-month" aria-label="Mes" (change)="onMonthSelect($event)">
+        <option *ngFor="let m of MONTHS; let i = index" [value]="i" [selected]="i === viewMonth()">{{ m }}</option>
+      </select>
+      <select class="date-select date-select-year" aria-label="Año" (change)="onYearSelect($event)">
+        <option *ngFor="let y of years()" [value]="y" [selected]="y === viewYear()">{{ y }}</option>
+      </select>
+      <button type="button" class="date-nav" aria-label="Mes siguiente" [disabled]="!canNext()" (click)="nextMonth()">
+        <i class="bi bi-chevron-right"></i>
+      </button>
+    </div>
+
+    <div class="date-weekdays" aria-hidden="true">
+      <span *ngFor="let w of WEEKDAYS">{{ w }}</span>
+    </div>
+
+    <div class="date-grid" role="grid" (keydown)="onGridKeydown($event)">
+      <button
+        *ngFor="let c of grid(); trackBy: trackIso"
+        type="button"
+        class="date-day"
+        [class.out]="!c.inMonth"
+        [class.today]="c.iso === today"
+        [class.selected]="c.iso === selected()"
+        [attr.data-iso]="c.iso"
+        [attr.aria-label]="spoken(c.iso)"
+        [attr.aria-pressed]="c.iso === selected()"
+        [disabled]="isOutOfRange(c.iso)"
+        (focus)="cursor = c.iso"
+        (click)="pick(c.iso)"
+      >
+        {{ c.day }}
+      </button>
+    </div>
+
+    <div class="date-popover-foot">
+      <button type="button" class="date-link" [disabled]="isOutOfRange(today)" (click)="pickToday()">Hoy</button>
+      <button type="button" class="date-link" (click)="close(true)">Cerrar</button>
+    </div>
+  </div>
+</div>

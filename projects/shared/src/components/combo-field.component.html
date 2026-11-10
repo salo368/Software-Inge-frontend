@@ -1,0 +1,83 @@
+<div class="combo" [class.open]="open()">
+  <div class="combo-box">
+    <span *ngIf="shownIcon() as icon" class="combo-flag" [ngClass]="icon" aria-hidden="true"></span>
+    <input
+      [id]="inputId || null"
+      type="text"
+      role="combobox"
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+      class="form-control combo-input"
+      [class.combo-select]="!searchable"
+      [class.has-icon]="!!shownIcon()"
+      [readOnly]="!searchable"
+      [class.is-invalid]="showInvalid()"
+      [placeholder]="placeholder"
+      [value]="shownText()"
+      [disabled]="disabled()"
+      [attr.aria-autocomplete]="searchable ? 'list' : null"
+      [attr.aria-readonly]="searchable ? null : 'true'"
+      [attr.aria-expanded]="open()"
+      [attr.aria-controls]="listId"
+      [attr.aria-activedescendant]="activeId()"
+      [attr.aria-invalid]="showInvalid() ? 'true' : null"
+      (focus)="onFocus($event)"
+      (click)="onClick()"
+      (input)="onInput($event)"
+      (keydown)="onKeydown($event)"
+      (blur)="onBlur()"
+    />
+    <button
+      type="button"
+      class="combo-chevron"
+      tabindex="-1"
+      aria-label="Mostrar opciones"
+      [disabled]="disabled()"
+      (mousedown)="$event.preventDefault()"
+      (click)="toggle()"
+    >
+      <i class="bi bi-chevron-down"></i>
+    </button>
+  </div>
+
+  <!-- mousedown is cancelled on the whole panel so the input keeps focus (and the
+       list stays open) when clicking an option or dragging the scrollbar. -->
+  <div
+    *ngIf="open()"
+    class="combo-panel"
+    role="listbox"
+    [id]="listId"
+    [style.min-width]="panelMinWidthStyle()"
+    [style.max-width.px]="panelMinWidth ? maxPanelPx() : null"
+    (mousedown)="$event.preventDefault()"
+  >
+    <ng-container *ngIf="visible().length; else empty">
+      <div
+        *ngFor="let r of visible(); let i = index; trackBy: trackKey"
+        class="combo-option"
+        role="option"
+        [id]="optionId(r.item.key)"
+        [attr.data-key]="r.item.key"
+        [class.active]="i === active()"
+        [class.selected]="r.item.key === value()"
+        [attr.aria-selected]="r.item.key === value()"
+        (mousemove)="mouseMove(i)"
+        (click)="choose(r.item)"
+      >
+        <span *ngIf="r.item.icon" class="combo-icon" [ngClass]="r.item.icon" aria-hidden="true"></span>
+        <span class="combo-label"
+          ><ng-container *ngIf="parts(r) as p">{{ p[0] }}<mark *ngIf="p[1]">{{ p[1] }}</mark>{{ p[2] }}</ng-container></span
+        >
+        <span *ngIf="r.item.hint" class="combo-hint">{{ r.item.hint }}</span>
+        <i *ngIf="r.item.key === value()" class="bi bi-check2 combo-check"></i>
+      </div>
+      <div *ngIf="hidden() > 0" class="combo-more">
+        Mostrando {{ visible().length }} de {{ results().length }}. Sigue escribiendo para afinar.
+      </div>
+    </ng-container>
+    <ng-template #empty>
+      <div class="combo-empty">{{ hasOptions() ? noResultsText : noOptionsText }}</div>
+    </ng-template>
+  </div>
+</div>
