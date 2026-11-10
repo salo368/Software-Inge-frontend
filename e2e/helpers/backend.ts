@@ -6,14 +6,18 @@
  * --------------------
  *
  * The Playwright specs test the FRONTEND. Getting to the interesting
- * screens (a process at `stage='signature'`, an open ceremony) via UI
- * clicks would take ~30 seconds per test and shake out bugs in code we
- * already cover in unit + backend integration tests. So we call the
- * backend directly to jump straight to the state under test.
+ * screens (a process at `stage='SIGNATURE'` with its signature open) via
+ * UI clicks takes a while and re-tests what PAREX already covers. So we
+ * call the backend directly to jump straight to the state under test.
+ *
+ * Signatures can no longer be opened over HTTP: `processes.generate_sign`
+ * opens them when the process documents are complete. So the seed walks
+ * the real process flow (create -> form -> documents) and waits for the
+ * `signature_id` to show up.
  *
  * All calls are plain `fetch`; no auth interceptor, no retries. If the
- * dev environment is down, the spec fails loudly at seed time -- which
- * is exactly what we want.
+ * environment is down, the spec fails loudly at seed time -- which is
+ * exactly what we want.
  */
 
 import * as crypto from 'node:crypto';
@@ -35,8 +39,7 @@ export interface RegisteredUser {
 }
 
 /** Register a fresh disposable user. Emails are timestamped so
- *  re-running the suite never collides. Password is fixed since we
- *  don't test the password policy here. */
+ *  re-running the suite never collides. */
 export async function registerTestUser(env: E2EEnv): Promise<RegisteredUser> {
   const rand = crypto.randomBytes(4).toString('hex');
   const email = `e2e-${Date.now()}-${rand}@example.com`;
@@ -49,266 +52,161 @@ export async function registerTestUser(env: E2EEnv): Promise<RegisteredUser> {
     body: JSON.stringify({ email, password, full_name: fullName }),
   });
   if (!res.ok) {
-    throw new Error(
-      `register failed: ${res.status} ${await res.text().catch(() => '')}`,
-    );
+    throw new Error(`register failed: ${res.status} ${await res.text().catch(() => '')}`);
   }
   const body = (await res.json()) as { user: { id: string }; token: string };
   return { userId: body.user.id, email, password, fullName, token: body.token };
 }
 
 // ---------------------------------------------------------------------------
-// Processes: seed to stage=signature (documents just uploaded, ready
-// for the user to click "Firmar ahora")
+// Process seed: FORM -> DOCUMENTS -> SIGNATURE
 // ---------------------------------------------------------------------------
 
-interface ProcessRow {
-  id: string;
-  stage: 'form' | 'documents' | 'signature' | 'payment' | 'done';
-  bank_id: number;
-  amount: number;
-  term_days: number;
-  rate: number;
-  sign_id?: string;
+export interface SeededProcess {
+  processId: string;
+  signatureId: string;
+}
+
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function json<T>(res: Response, label: string): Promise<T> {
+  if (!res.ok) {
+    throw new Error(`${label} failed: ${res.status} ${await res.text().catch(() => '')}`);
+  }
+  return (await res.json()) as T;
 }
 
 /**
- * Seeds a fresh process for `user` and drives it up to (but not
- * through) `stage='signature'`. The signature ceremony is NOT opened
- * here -- opening it is what the portal `Firmar ahora` button triggers,
- * which is exactly the UX we want the Playwright test to cover.
- *
- * Returns the process id so the spec can `goto('/portal/procesos/<id>')`.
+ * Seeds a fresh process for `user` and drives it to `SIGNATURE`, with the
+ * investment-order signature already open (`signature_id` set). The
+ * form declares the user non-PEP and non-declarant, so only `BANK_CERT`
+ * is required.
  */
 export async function seedProcessAtSignatureStage(
   env: E2EEnv,
   user: RegisteredUser,
-): Promise<string> {
-  const authH = { Authorization: `Bearer ${user.token}` };
+): Promise<SeededProcess> {
+  const auth = { Authorization: `Bearer ${user.token}` };
+  const jsonAuth = { ...auth, 'Content-Type': 'application/json' };
+  const amount = 5_000_000;
+  const term = 360;
 
-  // 1. Pick any bank.
-  const banksRes = await fetch(`${env.banksApiUrl}/banks`, { headers: authH });
-  if (!banksRes.ok) {
-    throw new Error(`banks list failed: ${banksRes.status}`);
-  }
-  const { banks } = (await banksRes.json()) as {
-    banks: Array<{ id: number }>;
-  };
-  if (!banks.length) throw new Error('no banks seeded in this dev env');
-  const bankId = banks[0].id;
+  // 1. Pick any bank that covers (amount, term).
+  const sim = await json<{ banks: Record<string, unknown> }>(
+    await fetch(`${env.banksApiUrl}/banks/simulate?amount=${amount}&term=${term}`),
+    'simulate',
+  );
+  const bankId = Number(Object.keys(sim.banks)[0]);
+  if (!Number.isFinite(bankId)) throw new Error('simulate returned no banks');
 
-  // 2. Create process (starts at stage='form').
-  const createRes = await fetch(`${env.processesApiUrl}/processes`, {
-    method: 'POST',
-    headers: { ...authH, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      bank_id: bankId,
-      amount: 5_000_000,   // 5M COP; irrelevant, but the API validates > 0.
-      term_days: 365,
-      rate: 12.5,
-    }),
-  });
-  if (!createRes.ok) {
-    throw new Error(
-      `create process failed: ${createRes.status} ${await createRes.text().catch(() => '')}`,
-    );
-  }
-  const proc: ProcessRow = ((await createRes.json()) as { process: ProcessRow })
-    .process;
-
-  // 3. Upsert form data (required to advance form -> documents).
-  const formRes = await fetch(`${env.processesApiUrl}/forms/me`, {
-    method: 'PUT',
-    headers: { ...authH, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      full_name: user.fullName,
-      document_number: '1234567890',
-      document_type: 'CC',
-      phone: '3001234567',
-      address: 'Cra 1 # 2-3',
-      city: 'Bogota',
-      birth_date: '1990-01-15',
-    }),
-  }).catch(() => null);
-  // Form service exposes /forms/me on the processes API URL in most
-  // envs; be lenient about a wrong URL and let the advance call fail
-  // with a friendlier error.
-  if (formRes && !formRes.ok && formRes.status !== 404) {
-    // Non-fatal: some envs mount forms elsewhere. The advance below
-    // will 400 if the row is truly missing, and that's the clearer
-    // signal.
-  }
-
-  // 4. Advance form -> documents.
-  await advance(env, user, proc.id);
-
-  // 5. Upload a fake declaracion_renta so advance documents -> signature
-  //    passes the `declaracion_renta_required` gate.
-  await uploadDeclaracionRenta(env, user, proc.id);
-
-  // 6. Advance documents -> signature. NOTE: this ALSO opens the
-  //    ceremony server-side (see processes/advance handler), so
-  //    `sign_url` is in the response. We DELIBERATELY ignore it here
-  //    -- the Playwright test is going to click "Firmar ahora" in the
-  //    portal, which will call advance again and reuse the existing
-  //    sign_id (portal detects a live ceremony and jumps directly).
-  await advance(env, user, proc.id);
-
-  return proc.id;
-}
-
-async function advance(
-  env: E2EEnv,
-  user: RegisteredUser,
-  processId: string,
-): Promise<void> {
-  const res = await fetch(
-    `${env.processesApiUrl}/processes/${processId}/advance`,
-    {
+  // 2. Process in FORM.
+  const created = await json<{ id: string }>(
+    await fetch(`${env.processesApiUrl}/processes/create-process`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${user.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: '{}',
-    },
-  );
-  if (!res.ok) {
-    throw new Error(
-      `advance ${processId} failed: ${res.status} ${await res.text().catch(() => '')}`,
-    );
-  }
-}
-
-async function uploadDeclaracionRenta(
-  env: E2EEnv,
-  user: RegisteredUser,
-  processId: string,
-): Promise<void> {
-  const authH = { Authorization: `Bearer ${user.token}` };
-  const body = {
-    process_id: processId,
-    file_type: 'declaracion_renta',
-    content_type: 'application/pdf',
-    original_name: 'declaracion.pdf',
-  };
-  const presign = await fetch(`${env.filesApiUrl}/files/upload-url`, {
-    method: 'POST',
-    headers: { ...authH, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!presign.ok) {
-    throw new Error(
-      `presign declaracion failed: ${presign.status} ${await presign.text().catch(() => '')}`,
-    );
-  }
-  const presignJson = (await presign.json()) as {
-    upload_url: string;
-    upload_headers?: Record<string, string>;
-    content_type: string;
-  };
-
-  // Minimal one-page PDF (well-formed enough that S3 doesn't reject
-  // it -- S3 doesn't sniff, but the size + header lets our downstream
-  // sanity checks pass).
-  const pdf = Buffer.from(
-    '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
-      '2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n' +
-      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]>>endobj\n' +
-      'trailer<</Root 1 0 R>>\n%%EOF\n',
-  );
-
-  const put = await fetch(presignJson.upload_url, {
-    method: 'PUT',
-    headers: presignJson.upload_headers ?? {
-      'Content-Type': presignJson.content_type,
-    },
-    body: pdf,
-  });
-  if (!put.ok) {
-    throw new Error(`S3 PUT declaracion failed: ${put.status}`);
-  }
-  // The files service registers the row asynchronously via an S3
-  // event, so the row is not visible immediately. Poll for a few
-  // seconds until it shows up on the process detail. `advance` would
-  // fail with `declaracion_renta_required` if we skipped this.
-  for (let i = 0; i < 20; i++) {
-    const detail = await fetch(
-      `${env.processesApiUrl}/processes/${processId}`,
-      { headers: authH },
-    );
-    if (detail.ok) {
-      const d = (await detail.json()) as {
-        files: Array<{ file_type: string }>;
-      };
-      if (d.files.some((f) => f.file_type === 'declaracion_renta')) return;
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error(
-    'declaracion_renta never registered on the process (S3 event delay?)',
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Signatures: open a raw ceremony for the standalone spec
-// ---------------------------------------------------------------------------
-
-export interface OpenCeremonyOptions {
-  signerEmail: string;
-  signerName: string;
-  /** SHA-256 hex of the PDF the ceremony will sign. */
-  pdfSha256: string;
-  /** S3 URI (`s3://bucket/key.pdf`) OR a presigned GET URL where the
-   *  worker can fetch the source PDF. */
-  pdfSourceUrl: string;
-  /** Optional; defaults to a sensible spot. */
-  signatureLocation?: {
-    page: number;
-    x_pct: number;
-    y_pct: number;
-    width_pct?: number;
-    height_pct?: number;
-  };
-}
-
-export interface OpenedCeremony {
-  signId: string;
-  signUrl: string;
-}
-
-/** Directly opens a fresh ceremony via `POST /signatures`. Requires the
- *  M2M service key (only known to the backend + this test suite). */
-export async function openCeremony(
-  env: E2EEnv,
-  opts: OpenCeremonyOptions,
-): Promise<OpenedCeremony> {
-  const res = await fetch(`${env.signaturesApiUrl}/signatures`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Service-Key': env.signaturesServiceKey,
-    },
-    body: JSON.stringify({
-      signer_email: opts.signerEmail,
-      signer_name: opts.signerName,
-      pdf_sha256: opts.pdfSha256,
-      pdf_source_url: opts.pdfSourceUrl,
-      signature_location: opts.signatureLocation ?? {
-        page: 0,
-        x_pct: 60,
-        y_pct: 85,
-      },
+      headers: jsonAuth,
+      body: JSON.stringify({ bank_id: bankId, amount: String(amount), term }),
     }),
+    'create-process',
+  );
+  const processId = created.id;
+
+  // 3. KYC form (one per user) + snapshot into the process -> DOCUMENTS.
+  await json(
+    await fetch(`${env.formsApiUrl}/forms/upsert-form`, {
+      method: 'PUT',
+      headers: jsonAuth,
+      body: JSON.stringify({
+        name: 'E2E',
+        last_name: 'Usuario',
+        gender: 'O',
+        birth_date: '1995-01-01',
+        birth_country: 'COLOMBIA',
+        birth_department: 'QUINDIO',
+        birth_city: 'ARMENIA',
+        nationality: 'COLOMBIA',
+        email: user.email,
+        document_type: 'CC',
+        document_number: String(Date.now()).slice(-10),
+        document_issuance_date: '2013-01-15',
+        document_issuance_country: 'COLOMBIA',
+        document_issuance_department: 'CUNDINAMARCA',
+        document_issuance_city: 'USAQUEN',
+        phone_ext: '57',
+        phone_number: '3000000000',
+        civil_status: 'SINGLE',
+        education_level: 'PROFESSIONAL',
+        is_pep: false,
+        monthly_income: 10_000_000,
+        monthly_expenses: 4_000_000,
+        total_assets: 30_000_000,
+        total_liabilities: 0,
+        is_tax_declarant: false,
+      }),
+    }),
+    'upsert-form',
+  );
+  await json(
+    await fetch(`${env.processesApiUrl}/processes/set-process-form`, {
+      method: 'POST',
+      headers: jsonAuth,
+      body: JSON.stringify({ process_id: processId }),
+    }),
+    'set-process-form',
+  );
+
+  // 4. Upload BANK_CERT (presigned PUT with the signed headers).
+  const presign = await json<{ upload_url: string; upload_headers: Record<string, string> }>(
+    await fetch(`${env.filesApiUrl}/files/upload-url`, {
+      method: 'POST',
+      headers: jsonAuth,
+      body: JSON.stringify({
+        process_id: processId,
+        file_type: 'BANK_CERT',
+        content_type: 'image/png',
+        original_name: 'e2e-bank-cert.png',
+      }),
+    }),
+    'files/upload-url',
+  );
+  const put = await fetch(presign.upload_url, {
+    method: 'PUT',
+    headers: presign.upload_headers,
+    body: PNG_1PX,
   });
-  if (!res.ok) {
-    throw new Error(
-      `open ceremony failed: ${res.status} ${await res.text().catch(() => '')}`,
+  if (!put.ok) throw new Error(`S3 PUT failed: ${put.status}`);
+
+  // 5. Poll: get-required-files fires generate_sign once the file is
+  //    registered; get-processes shows the signature_id when it's open.
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await fetch(
+      `${env.processesApiUrl}/processes/get-required-files?process_id=${processId}`,
+      { headers: auth },
     );
+    const list = await json<{ processes: { id: string; stage: string; signature_id: string | null }[] }>(
+      await fetch(`${env.processesApiUrl}/processes/get-processes`, { headers: auth }),
+      'get-processes',
+    );
+    const p = list.processes.find((x) => x.id === processId);
+    if (p?.stage === 'SIGNATURE' && p.signature_id) {
+      return { processId, signatureId: p.signature_id };
+    }
+    await new Promise((r) => setTimeout(r, 3000));
   }
-  const body = (await res.json()) as { sign_id: string; sign_url: string };
-  return { signId: body.sign_id, signUrl: body.sign_url };
+  throw new Error(`process ${processId} did not reach SIGNATURE in time`);
 }
+
+// ---------------------------------------------------------------------------
+// OTP
+// ---------------------------------------------------------------------------
+
+/** Why the specs that need the OTP are `test.fixme`. Same reason as PAREX. */
+export const OTP_BLOCKED_REASON =
+  'El backend ya no expone un OTP de prueba (set-otp solo lo envia por correo). ' +
+  'Reactivar cuando exista una fuente automatizable del codigo.';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers (base64 encoding + face-fixture reader)
