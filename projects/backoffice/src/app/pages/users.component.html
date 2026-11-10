@@ -1,0 +1,102 @@
+<app-shell>
+  <header class="bo-page-header">
+    <div>
+      <h1 class="bo-title">Inversionistas</h1>
+      <p class="bo-subtitle">Cuentas registradas en la plataforma.</p>
+    </div>
+    <div class="bo-subtitle tabular" id="backoffice-users-total">
+      @if (!loading() || total() > 0) {
+        {{ total() }} {{ total() === 1 ? 'inversionista' : 'inversionistas' }}{{ hasFilters() ? ' con esta búsqueda' : '' }}
+      }
+    </div>
+  </header>
+
+  <section class="bo-card">
+    <div class="bo-toolbar" role="search">
+      <div class="input-group bo-search">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input
+          id="backoffice-search"
+          type="search"
+          class="form-control"
+          [formControl]="search"
+          placeholder="Buscar por nombre o correo"
+          aria-label="Buscar inversionistas"
+          autocomplete="off"
+        />
+      </div>
+      @if (hasFilters()) {
+        <button type="button" class="bo-link-btn" id="backoffice-clear-filters" (click)="clear()">Limpiar búsqueda</button>
+      }
+    </div>
+
+    @if (error()) {
+      <div id="backoffice-users-error" class="alert alert-danger small m-3 mb-0" role="alert">
+        <i class="bi bi-exclamation-triangle me-1"></i>{{ error() }}
+      </div>
+    }
+
+    <div class="bo-table-wrap" id="backoffice-users-list">
+      <table class="bo-table" [attr.aria-busy]="loading()">
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 30%" />
+          <col style="width: 24%" />
+          <col style="width: 44px" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th scope="col">Inversionista</th>
+            <th scope="col">Registro</th>
+            <th scope="col">ID</th>
+            <th scope="col"><span class="visually-hidden">Abrir</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          @if (loading() && items().length === 0) {
+            @for (i of skeleton; track i) {
+              <tr>
+                <td><div class="bo-person"><span class="bo-avatar empty"></span><div class="flex-grow-1"><span class="bo-skel mb-2" style="width: 55%"></span><span class="bo-skel" style="width: 40%"></span></div></div></td>
+                <td><span class="bo-skel" style="width: 50%"></span></td>
+                <td><span class="bo-skel" style="width: 40%"></span></td>
+                <td></td>
+              </tr>
+            }
+          } @else if (items().length === 0) {
+            <tr>
+              <td colspan="4">
+                <div id="backoffice-users-empty" class="bo-empty">
+                  <i class="bi bi-people"></i>
+                  <strong>{{ error() ? 'Sin datos' : hasFilters() ? 'Nadie coincide con esa búsqueda' : 'Todavía no hay inversionistas' }}</strong>
+                  @if (hasFilters() && !error()) {
+                    <span>La búsqueda compara el inicio del nombre o del correo.</span>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+          @for (u of items(); track u.id) {
+            <tr class="bo-row-link" tabindex="0" [id]="'backoffice-user-' + u.id" (click)="open(u.id, $event)" (keydown.enter)="open(u.id)">
+              <td class="bo-td-main">
+                <div class="bo-person">
+                  <span class="bo-avatar" aria-hidden="true">{{ initials(u.full_name) }}</span>
+                  <div class="bo-cell-stack">
+                    <a [routerLink]="['/inversionistas', u.id]" class="bo-primary-text">{{ titleCase(u.full_name) }}</a>
+                    <span class="bo-secondary-text">{{ u.email }}</span>
+                  </div>
+                </div>
+              </td>
+              <td data-label="Registro"><span class="bo-secondary-text">{{ formatDateTime(u.created_at) }}</span></td>
+              <td data-label="ID"><span class="bo-mono">{{ shortId(u.id) }}</span></td>
+              <td class="bo-td-icon bo-td-hide-sm"><i class="bi bi-chevron-right bo-chevron"></i></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bo-card-footer">
+      <app-pager [page]="page()" [pageSize]="PAGE_SIZE" [total]="total()" (pageChange)="goTo($event)" />
+    </div>
+  </section>
+</app-shell>

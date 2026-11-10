@@ -26,12 +26,15 @@ test('each block resolves to its own index', () => {
   assert.equal(route('/portal/login'), '/portal/index.html');
   assert.equal(route('/portal/process/42'), '/portal/index.html');
   assert.equal(route('/sign/9f3c1a2b'), '/sign/index.html');
+  assert.equal(route('/backoffice/'), '/backoffice/index.html');
+  assert.equal(route('/backoffice/login'), '/backoffice/index.html');
 });
 
 test('a block root without a trailing slash redirects', () => {
   for (const [uri, target] of [
     ['/portal', '/portal/'],
     ['/sign', '/sign/'],
+    ['/backoffice', '/backoffice/'],
   ]) {
     const res = call(uri);
     assert.equal(res.statusCode, 301);
@@ -44,6 +47,8 @@ test('assets pass through untouched', () => {
   assert.equal(route('/portal/styles-XYZ.css'), '/portal/styles-XYZ.css');
   assert.equal(route('/sign/assets/pdf.worker.min.mjs'), '/sign/assets/pdf.worker.min.mjs');
   assert.equal(route('/favicon.ico'), '/favicon.ico');
+  assert.equal(route('/favicon-backoffice.svg'), '/favicon-backoffice.svg');
+  assert.equal(route('/backoffice/main-ABC123.js'), '/backoffice/main-ABC123.js');
   assert.equal(route('/assets/docs/parex.json'), '/assets/docs/parex.json');
 });
 
@@ -52,4 +57,5 @@ test('a prefix is not confused with a root route that merely starts the same', (
   // not hand it to the signing block or it would 403.
   assert.equal(route('/signals'), '/index.html');
   assert.equal(route('/portal-status'), '/index.html');
+  assert.equal(route('/backoffices'), '/index.html');
 });

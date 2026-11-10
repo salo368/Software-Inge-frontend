@@ -22,6 +22,7 @@ propio bucket.
 | `simulator` | `/` y `/docs` | no | Landing, simulador de tasas y documentacion |
 | `portal` | `/portal/*` | si | Login, registro, cuenta y wizard del proceso |
 | `signing` | `/sign/*` | no, el token es la credencial | Ceremonia de firma electronica ([README](./projects/signing/README.md)) |
+| `backoffice` | `/backoffice/*` | si, de administrador (`admin_auth`) | Herramientas internas ([README](./projects/backoffice/README.md)) |
 
 El codigo vive en `projects/<bloque>/`, y lo comun en `projects/shared/`,
 importable como `@shared/*`.
@@ -78,7 +79,7 @@ Serverless Framework v3. No hay Lambdas: solo `resources`, y
 | Recurso | Nombre |
 |---|---|
 | Stack CFN | `cdts-<stage>-frontend` |
-| Buckets | `cdts-<stage>-frontend-{simulator,portal,signing}-<accountId>` |
+| Buckets | `cdts-<stage>-frontend-{simulator,portal,signing,backoffice}-<accountId>` |
 | Edge function | `cdts-<stage>-frontend-spa-router` |
 | Parametro SSM | `/cdts/<stage>/frontend/url` |
 
@@ -109,18 +110,24 @@ propio `angular.json` para que el layout en S3 no pueda desalinearse del build.
 
 ## Ambientes
 
-Solo dos stages: `dev` y `pro`. No usar `prod`, `staging`, `qa`.
+Tres stages: `dev`, `staging` y `pro`. No usar `prod`, `qa`, `test`.
 
 | Stage | Rama | GitHub Environment | Usuario IAM |
 |---|---|---|---|
 | `dev` | `develop` | `dev` | `github-actions-dev-frontend-deployer` |
+| `staging` | `staging` | `staging` | `github-actions-staging-frontend-deployer` |
 | `pro` | `main` | `pro` | `github-actions-pro-frontend-deployer` |
 
 Region unica `us-east-1`, cuenta AWS `658548982073` (la misma del backend).
 
-Las configuraciones de Angular se llaman `dev` y `pro` (renombradas de las
-`development`/`production` que genera el CLI). `pro` usa `fileReplacements` para
-sustituir los `environment.ts` por los `environment.pro.ts`.
+`staging` es una copia de `develop` contra el backend `staging` (stacks
+`cdts-staging-*`, schema `staging`). La rama `staging` avanza solo por PRs
+`develop -> staging`.
+
+Las configuraciones de Angular se llaman `dev`, `staging` y `pro` (renombradas de
+las `development`/`production` que genera el CLI). `staging` y `pro` usan
+`fileReplacements` para sustituir los `environment.ts` por los
+`environment.staging.ts` / `environment.pro.ts`.
 
 ## Setup local
 
@@ -130,6 +137,7 @@ npm install
 npm start          # simulator en http://localhost:4200
 npm run start:portal    # portal  en http://localhost:4201
 npm run start:signing   # signing en http://localhost:4202
+npm run start:backoffice # backoffice en http://localhost:4203
 ```
 
 Apunta a las APIs de `dev`, asi que no hace falta levantar el backend.
@@ -151,13 +159,14 @@ Los artefactos quedan en `dist/<bloque>/browser/`.
 ## Deploy
 
 Va por GitHub Actions: push a `develop` despliega `dev` (workflow
-[`deploy-dev.yml`](./.github/workflows/deploy-dev.yml)), push a `main`
-despliega `pro` (workflow [`deploy-pro.yml`](./.github/workflows/deploy-pro.yml)).
-Los dos workflows contienen la pipeline **inline** (misma convención que
+[`deploy-dev.yml`](./.github/workflows/deploy-dev.yml)), push a `staging`
+despliega `staging` (workflow [`deploy-staging.yml`](./.github/workflows/deploy-staging.yml)),
+push a `main` despliega `pro` (workflow [`deploy-pro.yml`](./.github/workflows/deploy-pro.yml)).
+Los tres workflows contienen la pipeline **inline** (misma convención que
 backend: cada stage tiene su propio archivo con `stage` hardcodeado, y ambos
 comparten [`block-package.yml`](./.github/workflows/block-package.yml) como
 subworkflow reusable por bloque en el matrix). Forma:
-`plan → validate → infrastructure → blocks[matrix] → summary`.
+`plan → validate → infrastructure → blocks[matrix] → summary → parex`.
 
 1. **Plan** — [`scripts/ci/plan-deploy.sh`](./scripts/ci/plan-deploy.sh) mira el
    diff (anclado al **ultimo deploy exitoso** de este workflow en la rama, no al
@@ -177,14 +186,14 @@ subworkflow reusable por bloque en el matrix). Forma:
    **Que despliega exactamente** (analogo a `Infrastructure` del backend,
    pero mas pequeno):
 
-   - **CloudFront distribution** unica, compartida por los tres bloques.
-   - **Tres buckets S3** (`simulator`, `portal`, `signing`) — uno por
+   - **CloudFront distribution** unica, compartida por los cuatro bloques.
+   - **Cuatro buckets S3** (`simulator`, `portal`, `signing`, `backoffice`) — uno por
      bloque, cada `Deploy` de bloque sube su bundle al suyo.
    - **CloudFront Function [`infra/spa-router.js`](./infra/spa-router.js)**
      (edge): reescribe deep links a `/<block>/index.html` para que un
      refresh dentro de `/sign/xyz` no explote en el bucket equivocado.
    - **Cache behaviors + IAM**: `/` → simulator, `/portal/*` → portal,
-     `/sign/*` → signing.
+     `/sign/*` → signing, `/backoffice/*` → backoffice.
    - **SSM `/cdts/{stage}/frontend/url`**: el backend lo lee para armar
      enlaces absolutos `/sign/{sign_id}` en los emails de firma.
 
@@ -206,12 +215,18 @@ subworkflow reusable por bloque en el matrix). Forma:
      mal y sirve los `.js` como `text/plain`, lo que rompe la SPA), aplica
      `Cache-Control: immutable` a los assets hasheados y `no-cache` a
      `index.html`, borra huerfanos e invalida **solo las rutas de ese bloque**.
-   - **integration**: dev-only y **non-blocking**. Detecta `projects/<block>/e2e/`
+   - **integration**: dev + staging (nunca pro) y **non-blocking**. Detecta `projects/<block>/e2e/`
      (Playwright) o `projects/<block>/cypress/` (Cypress). Sin suite, skip con
      `::notice::` (verde). Con suite, corre contra la URL recien desplegada.
 5. **Summary** — descarga los artifacts `block-status-*` +
    `infrastructure-status` y renderiza una tabla por bloque/stage con donde
    paro cada uno, la URL desplegada y el estado de tests/integration.
+6. **PAREX** — dev-only y **non-blocking** (igual que `integration`, pero a
+   nivel de todo el deploy, no por bloque). Corre después de que `blocks`
+   termino, instala Chromium y ejecuta `npm run parex:e2e` contra la URL de
+   CloudFront recien desplegada. Sube el reporte HTML como artifact. Ver
+   [`parex/README.md`](./parex/README.md) para la suite completa y por que
+   es un mecanismo distinto del `integration` del punto 4.
 
 Para desplegar un bloque a mano, correr el workflow con `block: portal`. Para
 forzar el paso de infra sin tocar `serverless.yml`, con `force_infra: true`.
@@ -220,10 +235,15 @@ Para redeploy completo, `block: __all__`.
 > Todavia no hay `*.spec.ts` ni `projects/<block>/e2e/` — el pipeline los
 > **skippea limpiamente**, marcando la celda como `no specs` / `no e2e` en el
 > summary. Cuando se agreguen, el pipeline los recoge sin cambios en workflow.
+> Esto es **distinto** de PAREX (punto 6): PAREX ya tiene specs reales y
+> corre en cada deploy a dev, pero valida los tres bloques juntos desde
+> `parex/`, no reemplaza al `integration` por bloque si algún día se
+> necesita una suite propia de un solo bloque.
 >
-> Para la ceremonia de firma **ya existe** una suite Playwright, pero vive a
-> nivel de repo (`e2e/`, no `projects/signing/e2e/`) porque cruza dos bloques
-> (portal → signing → portal). Corre en dispatch manual via
+> Para la ceremonia de firma **ya existe**, además, una suite Playwright más
+> antigua y más angosta, pero vive a nivel de repo (`e2e/`, no
+> `projects/signing/e2e/`) porque cruza dos bloques (portal → signing →
+> portal). Corre en dispatch manual via
 > [`.github/workflows/e2e.yml`](./.github/workflows/e2e.yml), no en el critical
 > path del deploy. Ver [`e2e/README.md`](./e2e/README.md).
 
@@ -244,3 +264,5 @@ El plan de deploy lo descubre solo: no hay que registrarlo en ningun script.
 - Ramas desde `main`: `feat/<nombre>`, `fix/<nombre>`, `chore/<nombre>`.
 - Cada rama abre dos PRs: uno a `develop` (desplegar y probar en dev) y otro a
   `main` (desplegar en pro). `develop` y `main` nunca se mergean entre si.
+- `staging` no recibe ramas feature: se actualiza con un PR `develop -> staging`
+  (merge commit). Nunca abrir PRs desde `staging` hacia `develop` o `main`.

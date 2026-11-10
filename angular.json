@@ -329,6 +329,124 @@
           }
         }
       }
+    },
+    "backoffice": {
+      "projectType": "application",
+      "root": "projects/backoffice",
+      "sourceRoot": "projects/backoffice/src",
+      "prefix": "app",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/backoffice",
+            "index": "projects/backoffice/src/index.html",
+            "browser": "projects/backoffice/src/main.ts",
+            "baseHref": "/backoffice/",
+            "polyfills": [
+              "zone.js"
+            ],
+            "tsConfig": "projects/backoffice/tsconfig.app.json",
+            "assets": [],
+            "styles": [
+              "node_modules/bootstrap/dist/css/bootstrap.min.css",
+              "node_modules/bootstrap-icons/font/bootstrap-icons.css",
+              "projects/backoffice/src/styles.css"
+            ],
+            "scripts": [
+              "node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"
+            ]
+          },
+          "configurations": {
+            "pro": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/backoffice/src/environments/environment.ts",
+                  "with": "projects/backoffice/src/environments/environment.pro.ts"
+                },
+                {
+                  "replace": "projects/shared/src/environments/environment.ts",
+                  "with": "projects/shared/src/environments/environment.pro.ts"
+                }
+              ],
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "800kB",
+                  "maximumError": "1.5MB"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kB",
+                  "maximumError": "10kB"
+                }
+              ],
+              "outputHashing": "all"
+            },
+            "dev": {
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
+            },
+            "staging": {
+              "fileReplacements": [
+                {
+                  "replace": "projects/backoffice/src/environments/environment.ts",
+                  "with": "projects/backoffice/src/environments/environment.staging.ts"
+                },
+                {
+                  "replace": "projects/shared/src/environments/environment.ts",
+                  "with": "projects/shared/src/environments/environment.staging.ts"
+                }
+              ],
+              "optimization": true,
+              "extractLicenses": false,
+              "sourceMap": false,
+              "outputHashing": "all"
+            }
+          },
+          "defaultConfiguration": "dev"
+        },
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
+          "options": {
+            "port": 4203
+          },
+          "configurations": {
+            "pro": {
+              "buildTarget": "backoffice:build:pro"
+            },
+            "dev": {
+              "buildTarget": "backoffice:build:dev"
+            },
+            "staging": {
+              "buildTarget": "backoffice:build:staging"
+            }
+          },
+          "defaultConfiguration": "dev"
+        },
+        "test": {
+          "builder": "@angular-devkit/build-angular:karma",
+          "options": {
+            "polyfills": [
+              "zone.js",
+              "zone.js/testing"
+            ],
+            "tsConfig": "tsconfig.spec.json",
+            "assets": [],
+            "styles": [
+              "node_modules/bootstrap/dist/css/bootstrap.min.css",
+              "node_modules/bootstrap-icons/font/bootstrap-icons.css",
+              "projects/backoffice/src/styles.css"
+            ],
+            "scripts": [],
+            "include": [
+              "**/*.spec.ts"
+            ]
+          }
+        }
+      }
     }
   }
 }
