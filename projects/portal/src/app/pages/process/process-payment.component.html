@@ -29,13 +29,39 @@
       <label for="process-payment-amount" class="form-label small fw-semibold">Monto transferido (COP)</label>
       <input
         id="process-payment-amount"
-        type="number"
-        min="1"
-        step="1000"
+        type="text"
+        inputmode="numeric"
+        autocomplete="off"
+        appMoneyInput
+        placeholder="0"
         class="form-control"
         [(ngModel)]="amount"
+        [class.is-invalid]="exceedsPending()"
+        [attr.aria-invalid]="exceedsPending()"
+        aria-describedby="process-payment-amount-hint"
         [disabled]="submitting()"
       />
+      <div
+        id="process-payment-amount-hint"
+        class="small mt-1"
+        [class.text-danger]="exceedsPending()"
+        [class.text-body-secondary]="!exceedsPending()"
+      >
+        <ng-container *ngIf="exceedsPending(); else maxHint">
+          No puede superar lo que te falta ({{ formatCOP(p.pending) }}).
+        </ng-container>
+        <ng-template #maxHint>
+          Maximo {{ formatCOP(p.pending) }}.
+          <button
+            *ngIf="amount !== p.pending"
+            id="process-payment-pay-all"
+            type="button"
+            class="btn btn-link btn-sm p-0 align-baseline text-decoration-none"
+            [disabled]="submitting()"
+            (click)="payAll()"
+          >Pagar todo</button>
+        </ng-template>
+      </div>
     </div>
     <div class="col-md-7">
       <label for="process-payment-receipt-input" class="form-label small fw-semibold">Comprobante (PDF, JPG o PNG)</label>

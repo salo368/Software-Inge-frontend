@@ -1,0 +1,145 @@
+<app-shell>
+  <nav class="bo-breadcrumb" aria-label="Ruta">
+    <a routerLink="/procesos">Procesos</a>
+    <i class="bi bi-chevron-right"></i>
+    <span class="bo-mono">{{ process() ? shortId(process()!.id) : 'Detalle' }}</span>
+  </nav>
+
+  @if (loading()) {
+    <div class="bo-card bo-card-body">
+      <span class="bo-skel mb-3" style="width: 35%; height: 1.4rem"></span>
+      <span class="bo-skel" style="width: 55%"></span>
+    </div>
+  } @else if (notFound()) {
+    <div class="bo-card">
+      <div id="backoffice-process-notfound" class="bo-empty">
+        <i class="bi bi-folder-x"></i>
+        <strong>No encontramos este proceso</strong>
+        <span>Puede que el enlace esté incompleto.</span>
+      </div>
+    </div>
+  } @else if (error()) {
+    <div id="backoffice-process-error" class="alert alert-danger small" role="alert">{{ error() }}</div>
+  } @else {
+    @if (process(); as p) {
+      <header class="bo-page-header align-items-center">
+        <div class="d-flex align-items-center gap-3 min-w-0">
+          @if (bank(); as b) {
+            <img class="bo-bank-logo bo-bank-logo-lg" [src]="b.logo_url" alt="" />
+          }
+          <div class="min-w-0">
+            <h1 class="bo-title text-truncate" id="backoffice-process-title">CDT en {{ api.bankName(p.bank_id) }}</h1>
+            <p class="bo-subtitle">
+              {{ formatCOP(p.amount) }} a {{ p.term }} días · Creado {{ formatDateTime(p.created_at) }}
+            </p>
+          </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <span id="backoffice-process-stage" [attr.data-stage]="p.stage"><app-status [stage]="p.stage" [large]="true" /></span>
+          <a [routerLink]="['/aprobaciones', p.id]" class="btn btn-sm" [class.btn-primary]="awaitsDecision()" [class.btn-outline-secondary]="!awaitsDecision()" id="backoffice-process-open-review">
+            <i class="bi bi-clipboard-check me-1"></i>{{ awaitsDecision() ? 'Revisar y aprobar' : 'Expediente completo' }}
+          </a>
+        </div>
+      </header>
+
+      <section class="bo-card mb-4" aria-label="Avance del proceso">
+        <ol class="bo-stepper list-unstyled mb-0">
+          @for (s of STAGES; track s; let i = $index) {
+            <li class="bo-step" [class.done]="i < stageIndex()" [class.current]="i === stageIndex()">
+              <span class="bo-step-dot">
+                @if (i < stageIndex()) {
+                  <i class="bi bi-check-lg"></i>
+                }
+              </span>
+              <span class="bo-step-label">{{ STAGE_LABEL[s] }}</span>
+            </li>
+          }
+        </ol>
+      </section>
+
+      <div class="row g-4">
+        <div class="col-12 col-lg-8 order-2 order-lg-1">
+          <section class="bo-card" id="backoffice-process-form">
+            <div class="bo-card-header">
+              <h2 class="bo-card-title">Formulario del solicitante</h2>
+              @if (formUpdatedAt()) {
+                <span class="bo-secondary-text">Actualizado {{ formUpdatedAt() }}</span>
+              }
+            </div>
+            <app-form-sections [form]="p.submitted_form" />
+          </section>
+        </div>
+
+        <div class="col-12 col-lg-4 order-1 order-lg-2">
+          <section class="bo-card mb-4">
+            <div class="bo-card-header"><h2 class="bo-card-title">Resumen</h2></div>
+            <div class="bo-card-body">
+              <div class="bo-summary-row"><span>Monto</span><strong id="backoffice-process-amount">{{ formatCOP(p.amount) }}</strong></div>
+              <div class="bo-summary-row"><span>Plazo</span><strong>{{ p.term }} días</strong></div>
+              <div class="bo-summary-row"><span>Tasa E.A.</span><strong>{{ formatRate(p.rate) }}</strong></div>
+              <div class="bo-summary-row"><span>Interés estimado</span><strong class="text-success">+{{ formatCOP(interest()) }}</strong></div>
+              <div class="bo-summary-row bo-summary-total"><span>Al vencimiento</span><strong>{{ formatCOP(p.amount + interest()) }}</strong></div>
+            </div>
+          </section>
+
+          <section class="bo-card mb-4">
+            <div class="bo-card-header"><h2 class="bo-card-title">Inversionista</h2></div>
+            <div class="bo-card-body">
+              @if (ownerLoading()) {
+                <div class="bo-person">
+                  <span class="bo-avatar empty"></span>
+                  <div class="flex-grow-1"><span class="bo-skel mb-2" style="width: 60%"></span><span class="bo-skel" style="width: 75%"></span></div>
+                </div>
+              } @else {
+                <a [routerLink]="['/inversionistas', p.user_id]" class="bo-person text-decoration-none" id="backoffice-process-owner">
+                  <span class="bo-avatar" [class.empty]="!owner()" aria-hidden="true">
+                    @if (owner(); as u) {
+                      {{ initials(u.full_name) }}
+                    } @else {
+                      <i class="bi bi-person"></i>
+                    }
+                  </span>
+                  <span class="bo-cell-stack">
+                    <span class="bo-primary-text">{{ owner() ? titleCase(owner()!.full_name) : 'Ver inversionista' }}</span>
+                    <span class="bo-secondary-text">{{ owner()?.email ?? 'ID ' + shortId(p.user_id) }}</span>
+                  </span>
+                  <i class="bi bi-chevron-right bo-chevron ms-auto"></i>
+                </a>
+              }
+            </div>
+          </section>
+
+          <section class="bo-card">
+            <div class="bo-card-header"><h2 class="bo-card-title">Detalles</h2></div>
+            <div class="bo-card-body">
+              <div class="bo-summary-row">
+                <span>ID del proceso</span>
+                <strong class="bo-mono" [title]="p.id">
+                  {{ shortId(p.id) }}
+                  <button type="button" class="bo-copy" (click)="copy(p.id, 'process')" [attr.aria-label]="'Copiar ID del proceso'">
+                    <i class="bi" [ngClass]="copied() === 'process' ? 'bi-check2' : 'bi-copy'"></i>
+                  </button>
+                </strong>
+              </div>
+              <div class="bo-summary-row">
+                <span>Firma</span>
+                @if (p.signature_id) {
+                  <strong class="bo-mono" id="backoffice-process-signature" [title]="p.signature_id">
+                    {{ shortId(p.signature_id) }}
+                    <button type="button" class="bo-copy" (click)="copy(p.signature_id, 'signature')" aria-label="Copiar ID de la firma">
+                      <i class="bi" [ngClass]="copied() === 'signature' ? 'bi-check2' : 'bi-copy'"></i>
+                    </button>
+                  </strong>
+                } @else {
+                  <strong class="fw-normal text-muted">Sin generar</strong>
+                }
+              </div>
+              <div class="bo-summary-row"><span>Creado</span><strong class="fw-normal">{{ formatDateTime(p.created_at) }}</strong></div>
+              <div class="bo-summary-row"><span>Actualizado</span><strong class="fw-normal">{{ formatDateTime(p.updated_at) }}</strong></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    }
+  }
+</app-shell>

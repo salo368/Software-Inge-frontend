@@ -1,0 +1,453 @@
+<app-shell>
+  <nav class="bo-breadcrumb" aria-label="Ruta">
+    <a routerLink="/aprobaciones">Aprobaciones</a>
+    @if (step(); as s) {
+      <i class="bi bi-chevron-right"></i>
+      <a routerLink="/aprobaciones" [queryParams]="{ paso: s.key }">{{ s.title }}</a>
+    }
+    <i class="bi bi-chevron-right"></i>
+    <span class="bo-mono">{{ process() ? shortId(process()!.id) : 'Expediente' }}</span>
+  </nav>
+
+  @if (loading()) {
+    <div class="bo-card bo-card-body">
+      <span class="bo-skel mb-3" style="width: 35%; height: 1.4rem"></span>
+      <span class="bo-skel" style="width: 55%"></span>
+    </div>
+  } @else if (notFound()) {
+    <div class="bo-card">
+      <div id="backoffice-review-notfound" class="bo-empty">
+        <i class="bi bi-folder-x"></i>
+        <strong>No encontramos este proceso</strong>
+        <span>Puede que el enlace esté incompleto.</span>
+      </div>
+    </div>
+  } @else if (error()) {
+    <div id="backoffice-review-error" class="alert alert-danger small d-flex align-items-center justify-content-between gap-3" role="alert">
+      <span>{{ error() }}</span>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="backoffice-review-retry" (click)="reload()">Reintentar</button>
+    </div>
+  } @else {
+    @if (process(); as p) {
+      <!-- ============================== Header ============================== -->
+      <header class="bo-page-header align-items-center">
+        <div class="d-flex align-items-center gap-3 min-w-0">
+          @if (bank(); as b) {
+            <img class="bo-bank-logo bo-bank-logo-lg" [src]="b.logo_url" alt="" />
+          }
+          <div class="min-w-0">
+            <h1 class="bo-title text-truncate" id="backoffice-review-title">Expediente · CDT en {{ api.bankName(p.bank_id) }}</h1>
+            <p class="bo-subtitle text-truncate">
+              {{ applicantName() ?? 'Solicitante sin formulario' }} · {{ formatCOP(p.amount) }} a {{ p.term }} días
+            </p>
+          </div>
+        </div>
+        <span id="backoffice-review-stage" [attr.data-stage]="p.stage"><app-status [stage]="p.stage" [large]="true" /></span>
+      </header>
+
+      @if (approved(); as stage) {
+        <div class="bo-success mb-4" id="backoffice-review-approved" role="status">
+          <i class="bi bi-check-circle-fill"></i>
+          <div class="flex-grow-1">
+            <strong>{{ stage === 'SENT_TO_BANK' ? 'Proceso enviado al banco' : 'CDT activado' }}</strong>
+            <span>
+              {{
+                stage === 'SENT_TO_BANK'
+                  ? 'Pasó a "Confirmación del banco". Actívalo cuando el banco confirme la apertura.'
+                  : 'El inversionista ya ve su CDT como activo.'
+              }}
+            </span>
+          </div>
+          <a class="btn btn-sm btn-outline-secondary" routerLink="/aprobaciones" [queryParams]="{ paso: 'revision' }">Siguiente pendiente</a>
+        </div>
+      }
+
+      <div class="row g-4">
+        <!-- ============================== Main column ============================== -->
+        <div class="col-12 col-xl-8">
+          <nav class="bo-anchors mb-3" aria-label="Secciones del expediente">
+            <button type="button" (click)="scrollTo('review-summary')">Resumen</button>
+            <button type="button" (click)="scrollTo('review-payments')">Pagos</button>
+            <button type="button" (click)="scrollTo('review-documents')">Documentos</button>
+            <button type="button" (click)="scrollTo('review-signature')">Firma e identidad</button>
+            <button type="button" (click)="scrollTo('review-form')">Formulario</button>
+          </nav>
+
+          <!-- Summary -->
+          <section class="bo-card mb-4 bo-anchor-target" id="review-summary">
+            <div class="bo-card-header"><h2 class="bo-card-title">Resumen</h2></div>
+            <ol class="bo-stepper list-unstyled mb-0" aria-label="Avance del proceso">
+              @for (s of STAGES; track s; let i = $index) {
+                <li class="bo-step" [class.done]="i < stageIndex()" [class.current]="i === stageIndex()">
+                  <span class="bo-step-dot">
+                    @if (i < stageIndex()) {
+                      <i class="bi bi-check-lg"></i>
+                    }
+                  </span>
+                  <span class="bo-step-label">{{ STAGE_LABEL[s] }}</span>
+                </li>
+              }
+            </ol>
+            <div class="bo-card-body bo-divider-top">
+              <dl class="bo-dl bo-dl-4">
+                <div><dt>Monto</dt><dd class="tabular fw-semibold">{{ formatCOP(p.amount) }}</dd></div>
+                <div><dt>Plazo</dt><dd class="tabular">{{ p.term }} días</dd></div>
+                <div><dt>Tasa E.A.</dt><dd class="tabular">{{ formatRate(p.rate) }}</dd></div>
+                <div><dt>Al vencimiento</dt><dd class="tabular">{{ formatCOP(p.amount + interest()) }}</dd></div>
+                <div>
+                  <dt>Inversionista</dt>
+                  <dd>
+                    <a [routerLink]="['/inversionistas', p.user_id]" id="backoffice-review-owner">
+                      {{ owner() ? titleCase(owner()!.full_name) : 'Ver cuenta' }}
+                    </a>
+                  </dd>
+                </div>
+                <div><dt>Cuenta</dt><dd class="text-truncate">{{ owner()?.email ?? '—' }}</dd></div>
+                <div><dt>Creado</dt><dd>{{ formatDateTime(p.created_at) }}</dd></div>
+                <div><dt>Actualizado</dt><dd>{{ formatDateTime(p.updated_at) }}</dd></div>
+              </dl>
+            </div>
+          </section>
+
+          <!-- Payments -->
+          <section class="bo-card mb-4 bo-anchor-target" id="review-payments">
+            <div class="bo-card-header">
+              <h2 class="bo-card-title">Pagos</h2>
+              @if (paymentsSummary(); as s) {
+                <span class="bo-secondary-text tabular">{{ formatCOP(s.paid) }} de {{ formatCOP(s.amount) }}</span>
+              }
+            </div>
+            @switch (payments().state) {
+              @case ('loading') {
+                <div class="bo-card-body"><span class="bo-skel mb-2" style="width: 60%"></span><span class="bo-skel" style="width: 40%"></span></div>
+              }
+              @case ('error') {
+                <div class="bo-inline-error" id="backoffice-review-payments-error">
+                  <i class="bi bi-exclamation-triangle"></i>No pudimos consultar los pagos del proceso.
+                </div>
+              }
+              @default {
+                @if (payments().state === 'ok' && paymentsSummary(); as s) {
+                  <div class="bo-table-wrap">
+                    <table class="bo-table" id="backoffice-review-payments">
+                      <colgroup>
+                        <col style="width: 64px" />
+                        <col />
+                        <col style="width: 28%" />
+                        <col style="width: 30%" />
+                      </colgroup>
+                      <thead>
+                        <tr><th>#</th><th>Pago</th><th class="num">Monto</th><th class="num">Comprobante</th></tr>
+                      </thead>
+                      <tbody>
+                        @for (pay of paymentList(); track pay.id; let i = $index) {
+                          <tr>
+                            <td data-label="#"><span class="bo-secondary-text tabular">{{ i + 1 }}</span></td>
+                            <td data-label="Pago"><span class="bo-mono">{{ shortId(pay.id) }}</span></td>
+                            <td data-label="Monto" class="num"><span class="fw-medium">{{ formatCOP(pay.amount) }}</span></td>
+                            <td data-label="Comprobante" class="num">
+                              @if (pay.receipt_url) {
+                                <button type="button" class="btn btn-sm btn-outline-secondary" (click)="open(pay.receipt_url, 'Comprobante de pago ' + (i + 1), isImage(pay))">
+                                  <i class="bi" [ngClass]="isImage(pay) ? 'bi-image' : 'bi-file-earmark-pdf'"></i> Ver
+                                </button>
+                              } @else {
+                                <span class="bo-secondary-text">Sin comprobante</span>
+                              }
+                            </td>
+                          </tr>
+                        } @empty {
+                          <tr><td colspan="4"><div class="bo-empty py-4"><i class="bi bi-wallet2"></i><strong>Sin pagos registrados</strong></div></td></tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="bo-card-footer">
+                    <div class="bo-totals">
+                      <div><span>Total pagado</span><strong class="tabular" id="backoffice-review-paid">{{ formatCOP(s.paid) }}</strong></div>
+                      <div><span>Monto del CDT</span><strong class="tabular">{{ formatCOP(s.amount) }}</strong></div>
+                      <div>
+                        <span>{{ s.diff < 0 ? 'Falta' : s.diff > 0 ? 'Excedente' : 'Diferencia' }}</span>
+                        <strong class="tabular" [class.text-danger]="s.diff !== 0" [class.text-success]="s.diff === 0">
+                          {{ s.diff === 0 ? 'Cuadra' : formatCOP(s.diff < 0 ? -s.diff : s.diff) }}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                }
+              }
+            }
+          </section>
+
+          <!-- Documents -->
+          <section class="bo-card mb-4 bo-anchor-target" id="review-documents">
+            <div class="bo-card-header"><h2 class="bo-card-title">Documentos</h2></div>
+            @switch (files().state) {
+              @case ('loading') {
+                <div class="bo-card-body"><span class="bo-skel mb-2" style="width: 60%"></span><span class="bo-skel" style="width: 40%"></span></div>
+              }
+              @case ('error') {
+                <div class="bo-inline-error" id="backoffice-review-files-error">
+                  <i class="bi bi-exclamation-triangle"></i>No pudimos consultar los documentos del proceso.
+                </div>
+              }
+              @default {
+                <div class="bo-table-wrap">
+                  <table class="bo-table" id="backoffice-review-files">
+                    <colgroup>
+                      <col />
+                      <col style="width: 110px" />
+                      <col style="width: 104px" />
+                      <col style="width: 110px" />
+                      <col style="width: 88px" />
+                    </colgroup>
+                    <thead>
+                      <tr><th>Documento</th><th>Tipo</th><th class="num">Tamaño</th><th class="num">Subido</th><th><span class="visually-hidden">Abrir</span></th></tr>
+                    </thead>
+                    <tbody>
+                      @for (row of fileRows(); track row.type) {
+                        <tr [attr.data-file-type]="row.type">
+                          <td class="bo-td-main">
+                            <div class="bo-person">
+                              <span class="bo-file-icon" [class.missing]="!row.file"><i class="bi" [ngClass]="row.file ? 'bi-file-earmark-text' : 'bi-file-earmark-x'"></i></span>
+                              <div class="bo-cell-stack">
+                                <span class="bo-primary-text">{{ row.label }}</span>
+                                <span class="bo-secondary-text" [class.text-danger]="!row.file && row.required" [title]="row.file?.original_name ?? ''">
+                                  @if (row.file) {
+                                    {{ row.file.original_name || 'Archivo sin nombre' }}{{ row.previous ? ' · reemplazado ' + row.previous + (row.previous === 1 ? ' vez' : ' veces') : '' }}
+                                  } @else {
+                                    {{ row.required ? 'Falta: el inversionista no lo ha subido' : 'No aplica' }}
+                                  }
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td data-label="Tipo">
+                            <span class="bo-chip-sm" [class.req]="row.required">{{ row.generated ? 'Generado' : row.required ? 'Requerido' : 'Adicional' }}</span>
+                          </td>
+                          <td data-label="Tamaño" class="num"><span class="bo-secondary-text">{{ row.file ? formatBytes(row.file.size_bytes) : '—' }}</span></td>
+                          <td data-label="Subido" class="num"><span class="bo-secondary-text" [title]="row.file ? formatDateTime(row.file.uploaded_at) : ''">{{ row.file ? formatDate(row.file.uploaded_at) : '—' }}</span></td>
+                          <td class="bo-td-icon">
+                            @if (row.file) {
+                              <button type="button" class="btn btn-sm btn-outline-secondary" (click)="open(row.file.url, row.label, isImage(row.file))">Abrir</button>
+                            }
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            }
+          </section>
+
+          <!-- Signature & identity -->
+          <section class="bo-card mb-4 bo-anchor-target" id="review-signature">
+            <div class="bo-card-header">
+              <h2 class="bo-card-title">Firma e identidad</h2>
+              @if (signatureData(); as sd) {
+                <span class="bo-sign-stage" [attr.data-stage]="sd.stage">{{ SIGNATURE_STAGE_LABEL[sd.stage] }}</span>
+              }
+            </div>
+            @if (!p.signature_id) {
+              <div class="bo-empty py-4"><i class="bi bi-pen"></i><strong>Todavía no se ha generado la firma</strong></div>
+            } @else {
+              @switch (signature()?.state) {
+                @case ('loading') {
+                  <div class="bo-card-body"><span class="bo-skel mb-2" style="width: 60%"></span><span class="bo-skel" style="width: 40%"></span></div>
+                }
+                @case ('error') {
+                  <div class="bo-inline-error" id="backoffice-review-signature-error">
+                    <i class="bi bi-exclamation-triangle"></i>No pudimos consultar la firma del proceso.
+                  </div>
+                }
+                @default {
+                  @if (signatureData(); as sd) {
+                    @if (signaturePartial()) {
+                      <div class="bo-inline-warn">
+                        <i class="bi bi-info-circle"></i>Expediente completo de la firma no disponible: se muestran solo los datos públicos (sin evidencias de identidad ni telemetría).
+                      </div>
+                    }
+                    <div class="bo-card-body">
+                      <dl class="bo-dl bo-dl-3">
+                        <div><dt>Firmante</dt><dd>{{ sd.signatory ? titleCase(sd.signatory) : '—' }}</dd></div>
+                        <div><dt>Correo</dt><dd>{{ sd.email ?? '—' }}</dd></div>
+                        <div><dt>Firmada</dt><dd>{{ formatDateTime(sd.signed_at) }}</dd></div>
+                        @if (!signaturePartial()) {
+                          <div><dt>Iniciada</dt><dd>{{ formatDateTime(sd.created_at) }}</dd></div>
+                          <div><dt>Intentos de código</dt><dd class="tabular">{{ sd.otp_tries }}</dd></div>
+                          <div><dt>Dirección IP</dt><dd class="bo-mono text-body">{{ sd.telemetry.ip ?? '—' }}</dd></div>
+                          <div class="bo-dl-wide"><dt>Dispositivo</dt><dd class="bo-secondary-text">{{ sd.telemetry.user_agent ?? '—' }}</dd></div>
+                        }
+                        <div class="bo-dl-wide"><dt>Huella del documento firmado (SHA-256)</dt><dd class="bo-mono text-body">{{ sd.signed_hash ?? '—' }}</dd></div>
+                      </dl>
+                      <div class="d-flex flex-wrap gap-2 mt-3">
+                        <button type="button" class="btn btn-sm btn-primary" [disabled]="!sd.signed_url" (click)="open(sd.signed_url, 'Orden firmada')" id="backoffice-review-signed-pdf">
+                          <i class="bi bi-file-earmark-check me-1"></i>Orden firmada
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" [disabled]="!sd.doc_url" (click)="open(sd.doc_url, 'Orden sin firmar')">
+                          <i class="bi bi-file-earmark me-1"></i>Orden sin firmar
+                        </button>
+                      </div>
+                    </div>
+                    @if (evidences().length) {
+                      <div class="bo-card-body bo-divider-top">
+                        <h3 class="bo-section-title"><i class="bi bi-person-bounding-box"></i>Evidencias de identidad</h3>
+                        <div class="bo-evidence-grid" id="backoffice-review-evidences">
+                          @for (e of evidences(); track e.id) {
+                            <button type="button" class="bo-evidence" [class.missing]="!e.url" [disabled]="!e.url" (click)="open(e.url, e.title, true)" [attr.data-evidence]="e.id">
+                              @if (e.url) {
+                                <img [src]="e.url" [alt]="e.title" loading="lazy" />
+                              } @else {
+                                <span class="bo-evidence-empty"><i class="bi bi-image"></i>Sin foto</span>
+                              }
+                              <span class="bo-evidence-title">{{ e.title }}</span>
+                            </button>
+                          }
+                        </div>
+                      </div>
+                    }
+                  }
+                }
+              }
+            }
+          </section>
+
+          <!-- Applicant form -->
+          <section class="bo-card bo-anchor-target" id="review-form">
+            <div class="bo-card-header"><h2 class="bo-card-title">Formulario del solicitante</h2></div>
+            <app-form-sections [form]="form()" emptyId="backoffice-review-noform" />
+          </section>
+        </div>
+
+        <!-- ============================== Decision column ============================== -->
+        <div class="col-12 col-xl-4">
+          <aside class="bo-decision" aria-label="Decisión">
+            <section class="bo-card mb-4">
+              <div class="bo-card-header"><h2 class="bo-card-title">Verificaciones automáticas</h2></div>
+              <ul class="bo-checks" id="backoffice-review-checks">
+                @for (c of checks(); track c.id) {
+                  <li [attr.data-check]="c.id" [attr.data-status]="c.status">
+                    <span class="bo-check-icon">
+                      @switch (c.status) {
+                        @case ('ok') { <i class="bi bi-check-circle-fill"></i> }
+                        @case ('fail') { <i class="bi bi-x-circle-fill"></i> }
+                        @case ('pending') { <span class="spinner-border spinner-border-sm"></span> }
+                        @default { <i class="bi bi-question-circle-fill"></i> }
+                      }
+                    </span>
+                    <div class="min-w-0">
+                      <div class="bo-check-label">{{ c.label }}</div>
+                      @if (c.detail) {
+                        <div class="bo-secondary-text text-truncate" [title]="c.detail">{{ c.detail }}</div>
+                      }
+                    </div>
+                  </li>
+                }
+              </ul>
+            </section>
+
+            <section class="bo-card" id="backoffice-review-decision">
+              @if (step(); as s) {
+                <div class="bo-card-header"><h2 class="bo-card-title">{{ s.title }}</h2></div>
+                <div class="bo-card-body">
+                  <p class="bo-secondary-text mt-0">{{ s.description }}</p>
+                  <div class="form-label mb-2">Antes de aprobar, confirma que revisaste:</div>
+                  @for (m of manualChecks(); track m.id) {
+                    <label class="bo-check bo-check-block" [for]="'backoffice-manual-' + m.id">
+                      <input
+                        type="checkbox"
+                        [id]="'backoffice-manual-' + m.id"
+                        [checked]="!!manual()[m.id]"
+                        [disabled]="submitting()"
+                        (change)="toggleManual(m.id, $any($event.target).checked)"
+                      />
+                      <span>{{ m.label }}</span>
+                    </label>
+                  }
+                  @if (failures().length && dataReady()) {
+                    <label class="bo-check bo-check-block bo-check-warn mt-2" for="backoffice-override">
+                      <input type="checkbox" id="backoffice-override" [checked]="override()" [disabled]="submitting()" (change)="override.set($any($event.target).checked)" />
+                      <span>Hay {{ failures().length }} {{ failures().length === 1 ? 'verificación' : 'verificaciones' }} con alertas. Las revisé y apruebo de todas formas.</span>
+                    </label>
+                  }
+                  @if (!dataReady()) {
+                    <div class="bo-secondary-text small mt-2" id="backoffice-review-not-ready">
+                      <i class="bi bi-info-circle me-1"></i>Para aprobar, el expediente debe cargar completo (pagos, documentos y firma).
+                    </div>
+                  }
+                  @if (decisionError() && !confirmOpen()) {
+                    <div class="alert alert-danger small py-2 mt-3 mb-0" role="alert">
+                      {{ decisionError() }}
+                      <button type="button" class="bo-link-btn d-block mt-1" (click)="reload()">Recargar</button>
+                    </div>
+                  }
+                  <button type="button" class="btn btn-primary w-100 mt-3" id="backoffice-review-approve" [disabled]="!canApprove()" (click)="openConfirm()">
+                    {{ s.action }}
+                  </button>
+                </div>
+              } @else {
+                <div class="bo-card-header"><h2 class="bo-card-title">Decisión</h2></div>
+                <div class="bo-card-body" id="backoffice-review-readonly">
+                  @if (p.stage === 'COMPLETED') {
+                    <p class="mb-0"><i class="bi bi-check-circle-fill text-success me-1"></i>Este CDT ya está activo. No hay decisiones pendientes.</p>
+                  } @else {
+                    <p class="mb-2">Este proceso está en <strong>{{ STAGE_LABEL[p.stage] }}</strong>: todavía depende del inversionista.</p>
+                    <p class="bo-secondary-text mb-0">La revisión se habilita cuando complete el pago del monto total.</p>
+                  }
+                </div>
+              }
+            </section>
+          </aside>
+        </div>
+      </div>
+
+      <!-- ============================== Confirm dialog ============================== -->
+      @if (confirmOpen() && step(); as s) {
+        <div class="bo-modal-backdrop" (click)="!submitting() && confirmOpen.set(false)"></div>
+        <div class="bo-modal" role="dialog" aria-modal="true" aria-labelledby="backoffice-confirm-title" id="backoffice-review-confirm">
+          <h2 class="h5 fw-semibold mb-2" id="backoffice-confirm-title">{{ s.action }}?</h2>
+          <p class="bo-secondary-text">
+            {{
+              s.stage === 'REVIEW'
+                ? 'El proceso pasará a "Enviado al banco". Esta acción no se puede deshacer desde el backoffice.'
+                : 'El CDT quedará activo para el inversionista. Esta acción no se puede deshacer desde el backoffice.'
+            }}
+          </p>
+          <div class="bo-summary-row"><span>Solicitante</span><strong>{{ applicantName() ?? '—' }}</strong></div>
+          <div class="bo-summary-row"><span>Entidad</span><strong>{{ api.bankName(p.bank_id) }}</strong></div>
+          <div class="bo-summary-row"><span>Monto</span><strong>{{ formatCOP(p.amount) }}</strong></div>
+          @if (decisionError()) {
+            <div class="alert alert-danger small py-2 mt-3 mb-0" role="alert">{{ decisionError() }}</div>
+          }
+          <div class="d-flex justify-content-end gap-2 mt-4">
+            <button type="button" class="btn btn-outline-secondary" [disabled]="submitting()" (click)="confirmOpen.set(false)">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="backoffice-review-confirm-yes" [disabled]="submitting()" (click)="approve()">
+              @if (submitting()) {
+                <span class="spinner-border spinner-border-sm me-2"></span>
+              }
+              {{ s.action }}
+            </button>
+          </div>
+        </div>
+      }
+    }
+  }
+
+  <!-- ============================== Lightbox ============================== -->
+  @if (lightbox(); as lb) {
+    <div class="bo-lightbox" [class.bo-lightbox-pdf]="lb.kind === 'pdf'" (click)="lightbox.set(null)" role="dialog" aria-modal="true" [attr.aria-label]="lb.title" id="backoffice-lightbox" [attr.data-kind]="lb.kind">
+      <div class="bo-lightbox-bar" (click)="$event.stopPropagation()">
+        <span>{{ lb.title }}</span>
+        <div class="d-flex gap-2">
+          <a [href]="lb.url" target="_blank" rel="noopener" class="bo-icon-btn" aria-label="Abrir en otra pestaña" title="Abrir en otra pestaña"><i class="bi bi-box-arrow-up-right"></i></a>
+          <button type="button" class="bo-icon-btn" aria-label="Cerrar" (click)="lightbox.set(null)"><i class="bi bi-x-lg"></i></button>
+        </div>
+      </div>
+      @if (lb.kind === 'pdf') {
+        <iframe class="bo-lightbox-frame" [src]="lb.frame" [title]="lb.title" (click)="$event.stopPropagation()"></iframe>
+      } @else {
+        <img [src]="lb.url" [alt]="lb.title" (click)="$event.stopPropagation()" />
+      }
+    </div>
+  }
+</app-shell>

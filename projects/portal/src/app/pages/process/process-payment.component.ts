@@ -4,6 +4,7 @@ import { Component, EventEmitter, Input, OnInit, Output, inject, signal } from '
 import { FormsModule } from '@angular/forms';
 
 import { formatCOP } from '@shared/core/format';
+import { MoneyInputDirective } from '@shared/core/money-input.directive';
 import { ALLOWED_RECEIPT_CONTENT_TYPES, PaymentsService } from '@shared/core/payments.service';
 import { PendingPay, ProcessStage, ProcessesService } from '@shared/core/processes.service';
 
@@ -18,7 +19,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 @Component({
   selector: 'app-process-payment',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, MoneyInputDirective],
   templateUrl: './process-payment.component.html',
 })
 export class ProcessPaymentComponent implements OnInit {
@@ -84,8 +85,22 @@ export class ProcessPaymentComponent implements OnInit {
     this.receipt = file;
   }
 
+  /** The backend rejects a transfer above what is still owed (`amount_exceeds_pending`). */
+  exceedsPending(): boolean {
+    const p = this.pending();
+    return !!p && this.amount !== null && this.amount > p.pending;
+  }
+
+  /** Fills the field with everything that is still owed. */
+  payAll(): void {
+    const p = this.pending();
+    if (p) this.amount = p.pending || null;
+  }
+
   canSubmit(): boolean {
-    return !!this.receipt && !!this.amount && this.amount > 0 && !this.submitting();
+    return (
+      !!this.receipt && !!this.amount && this.amount > 0 && !this.exceedsPending() && !this.submitting()
+    );
   }
 
   submit(): void {
@@ -105,6 +120,8 @@ export class ProcessPaymentComponent implements OnInit {
       error: (err: HttpErrorResponse) => {
         this.submitting.set(false);
         this.error.set(friendlyPaymentError(err?.error?.error));
+        // Someone else paid in the meantime: refresh what is still owed.
+        if (err?.error?.error === 'amount_exceeds_pending') this.reload();
       },
     });
   }
@@ -114,6 +131,8 @@ function friendlyPaymentError(code: string | undefined): string {
   switch (code) {
     case 'invalid_amount':
       return 'Ingresa un monto mayor a cero.';
+    case 'amount_exceeds_pending':
+      return 'El monto supera lo que te falta por pagar. Revisa el valor e intenta de nuevo.';
     case 'process_not_in_payment_stage':
       return 'Este proceso ya no esta esperando pagos. Recarga la pagina.';
     case 'processes_unavailable':

@@ -1,0 +1,43 @@
+<app-shell>
+  <header class="bo-page-header">
+    <div>
+      <h1 class="bo-title">{{ greeting() }}{{ firstName() ? ', ' + firstName() : '' }}</h1>
+      <p class="bo-subtitle">Resumen de la operación en este momento.</p>
+    </div>
+  </header>
+
+  <div class="row g-3 mb-4" id="backoffice-kpis">
+    @for (k of kpis(); track k.id) {
+      <div class="col-6 col-xl-3">
+        <a [routerLink]="k.link" [queryParams]="k.query" class="bo-card bo-kpi" [id]="'backoffice-kpi-' + k.id">
+          <div class="bo-kpi-top"><span>{{ k.label }}</span><i class="bi" [ngClass]="k.icon"></i></div>
+          <div class="bo-kpi-value">
+            @if (k.value === null) {
+              <span class="bo-skel"></span>
+            } @else if (k.value < 0) {
+              <span title="No pudimos obtener este dato">—</span>
+            } @else {
+              {{ k.value }}
+            }
+          </div>
+          <div class="bo-kpi-link">{{ k.hint }} <i class="bi bi-arrow-right"></i></div>
+        </a>
+      </div>
+    }
+  </div>
+
+  <section class="bo-card">
+    <div class="bo-card-header">
+      <h2 class="bo-card-title">Procesos recientes</h2>
+      <a routerLink="/procesos" class="small fw-medium text-decoration-none" id="backoffice-recent-all">Ver todos <i class="bi bi-arrow-right"></i></a>
+    </div>
+    <app-process-table
+      id="backoffice-recent"
+      [rows]="recent()"
+      [loading]="recentLoading()"
+      [skeletonRows]="5"
+      [emptyTitle]="recentError() ? 'No pudimos cargar los procesos' : 'Todavía no hay procesos'"
+      emptyId="backoffice-recent-empty"
+    />
+  </section>
+</app-shell>
