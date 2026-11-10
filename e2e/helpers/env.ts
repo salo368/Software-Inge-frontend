@@ -14,36 +14,20 @@ export interface E2EEnv {
    *  signing at `${FRONTEND_BASE_URL}/sign/`. */
   frontendBaseUrl: string;
 
-  /** signatures HTTP API base (matches `SIGNATURES_API_URL` in the
-   *  backend). Used by the standalone spec to open ceremonies via
-   *  `POST /signatures`. */
-  signaturesApiUrl: string;
-
-  /** processes HTTP API base. Used by portal-to-payment spec to seed
-   *  a process straight into `stage='signature'`. */
-  processesApiUrl: string;
-
-  /** auth HTTP API base. Used by portal-to-payment spec to register a
-   *  disposable test user. */
+  /** auth HTTP API base. Registers a disposable test user. */
   authApiUrl: string;
 
-  /** banks HTTP API base. Used by the seed to look up any bank id. */
+  /** banks HTTP API base. `GET /banks/simulate` picks a bank for the seed. */
   banksApiUrl: string;
 
-  /** files HTTP API base. Used to upload a fake `declaracion_renta`
-   *  before advancing the process to `signature`. */
+  /** forms HTTP API base. `PUT /forms/upsert-form` fills the KYC form. */
+  formsApiUrl: string;
+
+  /** files HTTP API base. Uploads the required documents. */
   filesApiUrl: string;
 
-  /** Shared secret behind `X-Service-Key` for `POST /signatures`. Kept
-   *  in SSM under `/cdts/dev/signatures/service-key` on the backend
-   *  side; supply the same value here. */
-  signaturesServiceKey: string;
-
-  /** HMAC key used to prove-you-are-a-test-caller for
-   *  `POST /signatures/{sign_id}/otp`. Kept in SSM under
-   *  `/cdts/dev/signatures/debug-otp-key` (only bootstrapped in dev).
-   *  MUST be a hex string. */
-  debugOtpKeyHex: string;
+  /** processes HTTP API base. Seeds a process up to `SIGNATURE`. */
+  processesApiUrl: string;
 
   /** Absolute path to a JPEG showing a face with open eyes. Optional;
    *  when unset, tests skip the face-validation happy path. */
@@ -62,13 +46,11 @@ export function loadEnv(): E2EEnv {
 
   return {
     frontendBaseUrl: get('FRONTEND_BASE_URL').replace(/\/$/, ''),
-    signaturesApiUrl: get('SIGNATURES_API_URL').replace(/\/$/, ''),
-    processesApiUrl: get('PROCESSES_API_URL').replace(/\/$/, ''),
     authApiUrl: get('AUTH_API_URL').replace(/\/$/, ''),
     banksApiUrl: get('BANKS_API_URL').replace(/\/$/, ''),
+    formsApiUrl: get('FORMS_API_URL').replace(/\/$/, ''),
     filesApiUrl: get('FILES_API_URL').replace(/\/$/, ''),
-    signaturesServiceKey: get('SIGNATURES_SERVICE_KEY'),
-    debugOtpKeyHex: get('DEBUG_OTP_KEY_HEX'),
+    processesApiUrl: get('PROCESSES_API_URL').replace(/\/$/, ''),
     faceFixturePath: process.env['SIGNATURES_TEST_FACE_PATH'] ?? '',
   };
 }
