@@ -10,7 +10,7 @@ on:
         type: boolean
         default: false
       block:
-        description: "Manual override: empty=auto-detect, __all__=full deploy, or a single block name (simulator, portal, signing)."
+        description: "Manual override: empty=auto-detect, __all__=full deploy, or a single block name (simulator, portal, signing, backoffice)."
         type: string
         default: ''
 

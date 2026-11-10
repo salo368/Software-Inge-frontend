@@ -7,6 +7,7 @@ export const BLOCK_BASE = {
   simulator: '/',
   portal: '/portal/',
   signing: '/sign/',
+  backoffice: '/backoffice/',
 } as const;
 
 export type BlockName = keyof typeof BLOCK_BASE;

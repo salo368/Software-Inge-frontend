@@ -22,6 +22,7 @@ propio bucket.
 | `simulator` | `/` y `/docs` | no | Landing, simulador de tasas y documentacion |
 | `portal` | `/portal/*` | si | Login, registro, cuenta y wizard del proceso |
 | `signing` | `/sign/*` | no, el token es la credencial | Ceremonia de firma electronica ([README](./projects/signing/README.md)) |
+| `backoffice` | `/backoffice/*` | si, de administrador (`admin_auth`) | Herramientas internas ([README](./projects/backoffice/README.md)) |
 
 El codigo vive en `projects/<bloque>/`, y lo comun en `projects/shared/`,
 importable como `@shared/*`.
@@ -78,7 +79,7 @@ Serverless Framework v3. No hay Lambdas: solo `resources`, y
 | Recurso | Nombre |
 |---|---|
 | Stack CFN | `cdts-<stage>-frontend` |
-| Buckets | `cdts-<stage>-frontend-{simulator,portal,signing}-<accountId>` |
+| Buckets | `cdts-<stage>-frontend-{simulator,portal,signing,backoffice}-<accountId>` |
 | Edge function | `cdts-<stage>-frontend-spa-router` |
 | Parametro SSM | `/cdts/<stage>/frontend/url` |
 
@@ -136,6 +137,7 @@ npm install
 npm start          # simulator en http://localhost:4200
 npm run start:portal    # portal  en http://localhost:4201
 npm run start:signing   # signing en http://localhost:4202
+npm run start:backoffice # backoffice en http://localhost:4203
 ```
 
 Apunta a las APIs de `dev`, asi que no hace falta levantar el backend.
@@ -184,14 +186,14 @@ subworkflow reusable por bloque en el matrix). Forma:
    **Que despliega exactamente** (analogo a `Infrastructure` del backend,
    pero mas pequeno):
 
-   - **CloudFront distribution** unica, compartida por los tres bloques.
-   - **Tres buckets S3** (`simulator`, `portal`, `signing`) — uno por
+   - **CloudFront distribution** unica, compartida por los cuatro bloques.
+   - **Cuatro buckets S3** (`simulator`, `portal`, `signing`, `backoffice`) — uno por
      bloque, cada `Deploy` de bloque sube su bundle al suyo.
    - **CloudFront Function [`infra/spa-router.js`](./infra/spa-router.js)**
      (edge): reescribe deep links a `/<block>/index.html` para que un
      refresh dentro de `/sign/xyz` no explote en el bucket equivocado.
    - **Cache behaviors + IAM**: `/` → simulator, `/portal/*` → portal,
-     `/sign/*` → signing.
+     `/sign/*` → signing, `/backoffice/*` → backoffice.
    - **SSM `/cdts/{stage}/frontend/url`**: el backend lo lee para armar
      enlaces absolutos `/sign/{sign_id}` en los emails de firma.
 

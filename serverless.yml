@@ -63,6 +63,21 @@ resources:
           Rules:
             - ObjectOwnership: BucketOwnerEnforced
 
+    BackofficeBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties:
+        BucketName: cdts-${sls:stage}-frontend-backoffice-${aws:accountId}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        OwnershipControls:
+          Rules:
+            - ObjectOwnership: BucketOwnerEnforced
+
     CloudFrontOAC:
       Type: AWS::CloudFront::OriginAccessControl
       Properties:
@@ -107,6 +122,11 @@ resources:
               OriginAccessControlId: !GetAtt CloudFrontOAC.Id
               S3OriginConfig:
                 OriginAccessIdentity: ''
+            - Id: BackofficeOrigin
+              DomainName: !GetAtt BackofficeBucket.RegionalDomainName
+              OriginAccessControlId: !GetAtt CloudFrontOAC.Id
+              S3OriginConfig:
+                OriginAccessIdentity: ''
           CacheBehaviors:
             - PathPattern: /portal/*
               TargetOriginId: PortalOrigin
@@ -120,6 +140,16 @@ resources:
                   FunctionARN: !GetAtt SpaRouterFunction.FunctionARN
             - PathPattern: /sign/*
               TargetOriginId: SigningOrigin
+              ViewerProtocolPolicy: redirect-to-https
+              AllowedMethods: [GET, HEAD, OPTIONS]
+              CachedMethods: [GET, HEAD]
+              Compress: true
+              CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt SpaRouterFunction.FunctionARN
+            - PathPattern: /backoffice/*
+              TargetOriginId: BackofficeOrigin
               ViewerProtocolPolicy: redirect-to-https
               AllowedMethods: [GET, HEAD, OPTIONS]
               CachedMethods: [GET, HEAD]
@@ -191,6 +221,23 @@ resources:
                 StringEquals:
                   AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
 
+    BackofficeBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref BackofficeBucket
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Sid: AllowCloudFrontRead
+              Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${BackofficeBucket.Arn}/*'
+              Condition:
+                StringEquals:
+                  AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}'
+
     # Published so the backend can build absolute links into the SPA (the
     # signing email, for one) without a cross-stack import.
     FrontendUrlParameter:
@@ -213,6 +260,10 @@ resources:
       Value: !Ref SigningBucket
       Export:
         Name: cdts-${sls:stage}-frontend-signing-bucket
+    BackofficeBucketName:
+      Value: !Ref BackofficeBucket
+      Export:
+        Name: cdts-${sls:stage}-frontend-backoffice-bucket
     CloudFrontDistributionId:
       Value: !Ref CloudFrontDistribution
       Export:

@@ -19,7 +19,7 @@ const STAGE_LABEL: Record<ProcessStage, string> = {
   DOCUMENTS: 'Cargando documentos',
   SIGNATURE: 'Firma pendiente',
   PAYMENT: 'Pago pendiente',
-  REVIEW: 'Pago en revision',
+  REVIEW: 'En revision',
   SENT_TO_BANK: 'Enviado al banco',
   COMPLETED: 'CDT activo',
 };

@@ -6,6 +6,7 @@
  *   http://localhost:4300/        -> simulator (ng serve, :4200)
  *   http://localhost:4300/portal  -> portal    (ng serve, :4201)
  *   http://localhost:4300/sign    -> signing   (ng serve, :4202)
+ *   http://localhost:4300/backoffice -> backoffice (ng serve, :4203)
  *
  * Start the three dev servers first (`npm run start:blocks`), then this
  * (`npm run start:proxy`) and open http://localhost:4300. Reuses
@@ -21,14 +22,19 @@ const proxy = (port) =>
 
 const portal = proxy(4201);
 const signing = proxy(4202);
+const backoffice = proxy(4203);
 const simulator = proxy(4200);
 
-const pick = (url) => (url.startsWith('/portal') ? portal : url.startsWith('/sign') ? signing : simulator);
+const pick = (url) =>
+  url.startsWith('/portal') ? portal
+    : url.startsWith('/sign') ? signing
+    : url.startsWith('/backoffice') ? backoffice
+    : simulator;
 
 const server = http.createServer((req, res) => pick(req.url)(req, res));
 // Live reload websockets: each dev server serves its own under its base href.
 server.on('upgrade', (req, socket, head) => pick(req.url).upgrade(req, socket, head));
 
 server.listen(PORT, () => {
-  console.log(`Dev proxy on http://localhost:${PORT}  (/ -> 4200, /portal -> 4201, /sign -> 4202)`);
+  console.log(`Dev proxy on http://localhost:${PORT}  (/ -> 4200, /portal -> 4201, /sign -> 4202, /backoffice -> 4203)`);
 });

@@ -5,7 +5,7 @@
 // The prefixes below must stay in sync with the CacheBehaviors in
 // serverless.yml: a path that this function assigns to a block but CloudFront
 // routes to a different origin would 403.
-var BLOCK_PREFIXES = ['/portal/', '/sign/'];
+var BLOCK_PREFIXES = ['/portal/', '/sign/', '/backoffice/'];
 
 function handler(event) {
   var request = event.request;
