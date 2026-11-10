@@ -2,99 +2,294 @@
   <div class="spinner-border text-primary" role="status"></div>
 </div>
 
-<form id="process-form" *ngIf="!loading()" [formGroup]="form" (ngSubmit)="submit()">
+<form id="process-form" *ngIf="!loading()" [formGroup]="form" (ngSubmit)="submit()" novalidate>
   <div *ngIf="prefilled()" class="alert alert-info d-flex align-items-center gap-2 py-2 small mb-4">
     <i class="bi bi-info-circle"></i>
-    Precargamos tus datos del ultimo proceso. Revisa que sigan siendo correctos y actualiza lo que haya cambiado.
+    Precargamos tus datos de la ultima vez. Revisa que sigan siendo correctos y actualiza lo que haya cambiado.
   </div>
 
-  <h6 class="text-uppercase text-body-secondary small fw-bold mb-3">
-    <i class="bi bi-person-vcard me-1"></i>Informacion personal
-  </h6>
-  <div class="row g-3 mb-4">
-    <div class="col-12">
-      <label for="process-form-full-name" class="form-label small fw-semibold">Nombre completo</label>
-      <input id="process-form-full-name" formControlName="full_name" class="form-control" placeholder="Como aparece en tu documento" />
-    </div>
-    <div class="col-md-6">
-      <label for="process-form-birth-date" class="form-label small fw-semibold">Fecha de nacimiento</label>
-      <input id="process-form-birth-date" formControlName="birth_date" type="date" class="form-control" />
-    </div>
-    <div class="col-md-3">
-      <label for="process-form-document-type" class="form-label small fw-semibold">Tipo de documento</label>
-      <select id="process-form-document-type" formControlName="document_type" class="form-select">
-        <option *ngFor="let t of DOCUMENT_TYPES" [value]="t">{{ t }}</option>
-      </select>
-    </div>
-    <div class="col-md-3">
-      <label for="process-form-document-number" class="form-label small fw-semibold">Numero de documento</label>
-      <input id="process-form-document-number" formControlName="document_number" class="form-control" placeholder="1020304050" />
-    </div>
-    <div class="col-md-6">
-      <label for="process-form-phone" class="form-label small fw-semibold">Telefono</label>
-      <input id="process-form-phone" formControlName="phone" class="form-control" placeholder="+57 300 000 0000" />
-    </div>
-    <div class="col-md-6">
-      <label for="process-form-city" class="form-label small fw-semibold">Ciudad</label>
-      <input id="process-form-city" formControlName="city" class="form-control" placeholder="Bogota" />
-    </div>
-    <div class="col-12">
-      <label for="process-form-address" class="form-label small fw-semibold">Direccion de residencia</label>
-      <input id="process-form-address" formControlName="address" class="form-control" placeholder="Cll 123 # 45 - 67" />
-    </div>
-  </div>
+  <!-- ================= 1. Informacion personal ================= -->
+  <section class="form-section" id="process-form-section-personal">
+    <h6 class="form-section-title">
+      <span class="form-section-icon"><i class="bi bi-person-vcard"></i></span>
+      Informacion personal
+    </h6>
+    <div class="row g-3">
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-name" class="form-label small fw-semibold">Primer nombre</label>
+        <input id="process-form-name" formControlName="name" class="form-control" autocomplete="given-name" [class.is-invalid]="invalid('name')" />
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-second-name" class="form-label small fw-semibold">Segundo nombre <span class="text-body-secondary fw-normal">(opcional)</span></label>
+        <input id="process-form-second-name" formControlName="second_name" class="form-control" autocomplete="additional-name" />
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-last-name" class="form-label small fw-semibold">Primer apellido</label>
+        <input id="process-form-last-name" formControlName="last_name" class="form-control" autocomplete="family-name" [class.is-invalid]="invalid('last_name')" />
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-second-last-name" class="form-label small fw-semibold">Segundo apellido <span class="text-body-secondary fw-normal">(opcional)</span></label>
+        <input id="process-form-second-last-name" formControlName="second_last_name" class="form-control" />
+      </div>
 
-  <h6 class="text-uppercase text-body-secondary small fw-bold mb-3">
-    <i class="bi bi-briefcase me-1"></i>Perfil financiero
-  </h6>
-  <div class="row g-3 mb-4">
-    <div class="col-md-6">
-      <label for="process-form-occupation" class="form-label small fw-semibold">Ocupacion</label>
-      <input id="process-form-occupation" formControlName="occupation" class="form-control" placeholder="Ingeniero, medico, comerciante..." />
-    </div>
-    <div class="col-md-6">
-      <label for="process-form-economic-activity" class="form-label small fw-semibold">Actividad economica</label>
-      <input id="process-form-economic-activity" formControlName="economic_activity" class="form-control" placeholder="Empleado, independiente, empresa..." />
-    </div>
-
-    <div class="col-md-6">
-      <label for="process-form-monthly-income" class="form-label small fw-semibold">Ingresos mensuales (COP)</label>
-      <input id="process-form-monthly-income" formControlName="monthly_income" type="number" min="0" step="10000" class="form-control" />
-    </div>
-    <div class="col-md-6">
-      <label for="process-form-monthly-expenses" class="form-label small fw-semibold">Egresos mensuales (COP)</label>
-      <input id="process-form-monthly-expenses" formControlName="monthly_expenses" type="number" min="0" step="10000" class="form-control" />
-    </div>
-
-    <div class="col-md-6">
-      <label for="process-form-total-assets" class="form-label small fw-semibold">Total activos (COP)</label>
-      <input id="process-form-total-assets" formControlName="total_assets" type="number" min="0" step="100000" class="form-control" />
-    </div>
-    <div class="col-md-6">
-      <label for="process-form-total-liabilities" class="form-label small fw-semibold">Total pasivos (COP)</label>
-      <input id="process-form-total-liabilities" formControlName="total_liabilities" type="number" min="0" step="100000" class="form-control" />
-    </div>
-
-    <div class="col-12">
-      <label for="process-form-source-of-funds" class="form-label small fw-semibold">Origen de los fondos</label>
-      <input id="process-form-source-of-funds" formControlName="source_of_funds" class="form-control" placeholder="Ahorros, salario, herencia..." />
-    </div>
-
-    <div class="col-12">
-      <div class="form-check">
-        <input formControlName="is_peps" type="checkbox" class="form-check-input" id="pepsCheck" />
-        <label for="pepsCheck" class="form-check-label small">
-          Soy o he sido persona expuesta politicamente (PEP) o tengo un familiar cercano que lo sea.
-        </label>
+      <div class="col-md-4 col-lg-2">
+        <label for="process-form-gender" class="form-label small fw-semibold">Genero</label>
+        <app-combo-field
+          inputId="process-form-gender"
+          formControlName="gender"
+          [options]="GENDERS"
+          [searchable]="false"
+          placeholder="Selecciona"
+        />
+      </div>
+      <div class="col-md-4 col-lg-3">
+        <label for="process-form-birth-date" class="form-label small fw-semibold">Fecha de nacimiento</label>
+        <app-date-field inputId="process-form-birth-date" formControlName="birth_date" [min]="MIN_DATE" [max]="today" [startView]="birthStartView" />
+      </div>
+      <div class="col-md-4 col-lg-3">
+        <label for="process-form-nationality" class="form-label small fw-semibold">Nacionalidad</label>
+        <app-combo-field
+          inputId="process-form-nationality"
+          formControlName="nationality"
+          [options]="countries()"
+          [pinned]="PINNED_COUNTRIES"
+          placeholder="Busca un pais"
+        />
+      </div>
+      <div class="col-md-6 col-lg-2">
+        <label for="process-form-civil-status" class="form-label small fw-semibold">Estado civil</label>
+        <app-combo-field
+          inputId="process-form-civil-status"
+          formControlName="civil_status"
+          [options]="CIVIL_STATUSES"
+          [searchable]="false"
+          placeholder="Selecciona"
+        />
+      </div>
+      <div class="col-md-6 col-lg-2">
+        <label for="process-form-education-level" class="form-label small fw-semibold">Nivel educativo</label>
+        <app-combo-field
+          inputId="process-form-education-level"
+          formControlName="education_level"
+          [options]="EDUCATION_LEVELS"
+          [searchable]="false"
+          placeholder="Selecciona"
+        />
       </div>
     </div>
-  </div>
+  </section>
+
+  <!-- ================= 2. Lugar de nacimiento ================= -->
+  <section class="form-section" id="process-form-section-birth">
+    <h6 class="form-section-title">
+      <span class="form-section-icon"><i class="bi bi-geo-alt"></i></span>
+      Lugar de nacimiento
+    </h6>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label for="process-form-birth-country" class="form-label small fw-semibold">Pais</label>
+        <app-combo-field
+          inputId="process-form-birth-country"
+          formControlName="birth_country"
+          [options]="countries()"
+          [pinned]="PINNED_COUNTRIES"
+          placeholder="Busca un pais"
+        />
+      </div>
+      <ng-container *ngIf="birthInColombia(); else birthAbroad">
+        <div class="col-md-4">
+          <label for="process-form-birth-department" class="form-label small fw-semibold">Departamento</label>
+          <app-combo-field
+          inputId="process-form-birth-department"
+          formControlName="birth_department"
+          [options]="departments()"
+          placeholder="Busca un departamento"
+        />
+        </div>
+        <div class="col-md-4">
+          <label for="process-form-birth-city" class="form-label small fw-semibold">Ciudad</label>
+          <app-combo-field
+          inputId="process-form-birth-city"
+          formControlName="birth_city"
+          [options]="birthCities()"
+          [placeholder]="form.controls.birth_department.value ? 'Busca una ciudad' : 'Elige primero el departamento'"
+          noOptionsText="Elige primero el departamento"
+        />
+        </div>
+      </ng-container>
+      <ng-template #birthAbroad>
+        <div class="col-md-4">
+          <label for="process-form-birth-department" class="form-label small fw-semibold">Estado / provincia</label>
+          <input id="process-form-birth-department" formControlName="birth_department" class="form-control" [class.is-invalid]="invalid('birth_department')" />
+        </div>
+        <div class="col-md-4">
+          <label for="process-form-birth-city" class="form-label small fw-semibold">Ciudad</label>
+          <input id="process-form-birth-city" formControlName="birth_city" class="form-control" [class.is-invalid]="invalid('birth_city')" />
+        </div>
+      </ng-template>
+    </div>
+  </section>
+
+  <!-- ================= 3. Documento de identidad ================= -->
+  <section class="form-section" id="process-form-section-document">
+    <h6 class="form-section-title">
+      <span class="form-section-icon"><i class="bi bi-card-heading"></i></span>
+      Documento de identidad
+    </h6>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label for="process-form-document-type" class="form-label small fw-semibold">Tipo de documento</label>
+        <app-combo-field
+          inputId="process-form-document-type"
+          formControlName="document_type"
+          [options]="DOCUMENT_TYPES"
+          [searchable]="false"
+          placeholder="Selecciona"
+        />
+      </div>
+      <div class="col-md-4">
+        <label for="process-form-document-number" class="form-label small fw-semibold">Numero de documento</label>
+        <input id="process-form-document-number" formControlName="document_number" inputmode="numeric" class="form-control" placeholder="1020304050" [class.is-invalid]="invalid('document_number')" />
+        <div class="invalid-feedback">Solo numeros, sin puntos ni espacios.</div>
+      </div>
+      <div class="col-md-4">
+        <label for="process-form-document-issuance-date" class="form-label small fw-semibold">Fecha de expedicion</label>
+        <app-date-field inputId="process-form-document-issuance-date" formControlName="document_issuance_date" [min]="MIN_DATE" [max]="today" />
+      </div>
+    </div>
+
+    <div class="form-subsection-title"><i class="bi bi-geo me-1"></i>Lugar de expedicion</div>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label for="process-form-document-issuance-country" class="form-label small fw-semibold">Pais</label>
+        <app-combo-field
+          inputId="process-form-document-issuance-country"
+          formControlName="document_issuance_country"
+          [options]="countries()"
+          [pinned]="PINNED_COUNTRIES"
+          placeholder="Busca un pais"
+        />
+      </div>
+      <ng-container *ngIf="issuedInColombia(); else issuedAbroad">
+        <div class="col-md-4">
+          <label for="process-form-document-issuance-department" class="form-label small fw-semibold">Departamento</label>
+          <app-combo-field
+          inputId="process-form-document-issuance-department"
+          formControlName="document_issuance_department"
+          [options]="departments()"
+          placeholder="Busca un departamento"
+        />
+        </div>
+        <div class="col-md-4">
+          <label for="process-form-document-issuance-city" class="form-label small fw-semibold">Ciudad o localidad</label>
+          <app-combo-field
+          inputId="process-form-document-issuance-city"
+          formControlName="document_issuance_city"
+          [options]="issuanceCities()"
+          [placeholder]="form.controls.document_issuance_department.value ? 'Busca una ciudad o localidad' : 'Elige primero el departamento'"
+          noOptionsText="Elige primero el departamento"
+        />
+        </div>
+      </ng-container>
+      <ng-template #issuedAbroad>
+        <div class="col-md-4">
+          <label for="process-form-document-issuance-department" class="form-label small fw-semibold">Estado / provincia</label>
+          <input id="process-form-document-issuance-department" formControlName="document_issuance_department" class="form-control" [class.is-invalid]="invalid('document_issuance_department')" />
+        </div>
+        <div class="col-md-4">
+          <label for="process-form-document-issuance-city" class="form-label small fw-semibold">Ciudad</label>
+          <input id="process-form-document-issuance-city" formControlName="document_issuance_city" class="form-control" [class.is-invalid]="invalid('document_issuance_city')" />
+        </div>
+      </ng-template>
+    </div>
+  </section>
+
+  <!-- ================= 4. Contacto ================= -->
+  <section class="form-section" id="process-form-section-contact">
+    <h6 class="form-section-title">
+      <span class="form-section-icon"><i class="bi bi-telephone"></i></span>
+      Contacto
+    </h6>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label for="process-form-email" class="form-label small fw-semibold">Correo</label>
+        <input id="process-form-email" formControlName="email" type="email" autocomplete="email" class="form-control" [class.is-invalid]="invalid('email')" />
+      </div>
+      <div class="col-5 col-md-3 col-lg-2">
+        <label for="process-form-phone-ext" class="form-label small fw-semibold">Indicativo</label>
+        <app-combo-field
+          inputId="process-form-phone-ext"
+          formControlName="phone_country"
+          [options]="dialOptions()"
+          [pinned]="DIAL_PINNED"
+          placeholder="+57"
+          noOptionsText="Cargando paises..."
+          panelMinWidth="min(21rem, 86vw)"
+        />
+      </div>
+      <div class="col-7 col-md-3 col-lg-4">
+        <label for="process-form-phone" class="form-label small fw-semibold">Celular</label>
+        <input id="process-form-phone" formControlName="phone_number" inputmode="tel" autocomplete="tel-national" class="form-control" placeholder="3000000000" [class.is-invalid]="invalid('phone_number')" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 5. Perfil financiero ================= -->
+  <section class="form-section" id="process-form-section-financial">
+    <h6 class="form-section-title">
+      <span class="form-section-icon"><i class="bi bi-briefcase"></i></span>
+      Perfil financiero
+    </h6>
+    <div class="row g-3">
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-monthly-income" class="form-label small fw-semibold">Ingresos mensuales (COP)</label>
+        <input id="process-form-monthly-income" formControlName="monthly_income" type="text" inputmode="numeric" autocomplete="off" appMoneyInput placeholder="0" class="form-control" [class.is-invalid]="invalid('monthly_income')" />
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-monthly-expenses" class="form-label small fw-semibold">Egresos mensuales (COP)</label>
+        <input id="process-form-monthly-expenses" formControlName="monthly_expenses" type="text" inputmode="numeric" autocomplete="off" appMoneyInput placeholder="0" class="form-control" [class.is-invalid]="invalid('monthly_expenses')" />
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-total-assets" class="form-label small fw-semibold">Total activos (COP)</label>
+        <input id="process-form-total-assets" formControlName="total_assets" type="text" inputmode="numeric" autocomplete="off" appMoneyInput placeholder="0" class="form-control" [class.is-invalid]="invalid('total_assets')" />
+      </div>
+      <div class="col-md-6 col-lg-3">
+        <label for="process-form-total-liabilities" class="form-label small fw-semibold">Total pasivos (COP)</label>
+        <input id="process-form-total-liabilities" formControlName="total_liabilities" type="text" inputmode="numeric" autocomplete="off" appMoneyInput placeholder="0" class="form-control" [class.is-invalid]="invalid('total_liabilities')" />
+      </div>
+    </div>
+
+    <div class="form-subsection-title"><i class="bi bi-patch-question me-1"></i>Declaraciones</div>
+    <div class="row g-3">
+      <div class="col-12 col-lg-6">
+        <div class="form-check">
+          <input formControlName="is_tax_declarant" type="checkbox" class="form-check-input" id="process-form-is-tax-declarant" />
+          <label for="process-form-is-tax-declarant" class="form-check-label small">
+            Soy declarante de renta. <span class="text-body-secondary">Te pediremos tu ultima declaracion.</span>
+          </label>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="form-check">
+          <input formControlName="is_pep" type="checkbox" class="form-check-input" id="process-form-is-pep" />
+          <label for="process-form-is-pep" class="form-check-label small">
+            Soy o he sido persona expuesta politicamente (PEP) o tengo un familiar cercano que lo sea.
+            <span class="text-body-secondary">Te pediremos tu RUT.</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <div id="process-form-error" *ngIf="error()" class="alert alert-danger py-2 small">{{ error() }}</div>
 
-  <button id="process-form-submit" type="submit" class="btn btn-primary w-100 py-2" [disabled]="saving()">
-    <span *ngIf="saving()" class="spinner-border spinner-border-sm me-2"></span>
-    Guardar y continuar
-    <i class="bi bi-arrow-right ms-2"></i>
-  </button>
+  <div class="row">
+    <div class="col-12 col-lg-4 ms-lg-auto">
+      <button id="process-form-submit" type="submit" class="btn btn-primary w-100 py-2" [disabled]="saving()">
+        <span *ngIf="saving()" class="spinner-border spinner-border-sm me-2"></span>
+        {{ submitLabel }}
+        <i class="bi bi-arrow-right ms-2"></i>
+      </button>
+    </div>
+  </div>
 </form>
