@@ -17,12 +17,22 @@ const target =
 
 if (!(target in environments)) {
     throw new Error(
-        `TEST_ENV inválido: "${target}". Usa "dev" o "pro".`
+        `TEST_ENV inválido: "${target}". Usa "dev", "staging" o "pro".`
     );
 }
 
 const environment =
     environments[target];
+
+/*
+ * URL contra la que se prueba. Por defecto es la del ambiente desplegado
+ * (CloudFront). `PAREX_BASE_URL` permite apuntar a otra: típicamente el
+ * front local detrás del proxy que imita a CloudFront
+ * (`npm run start:proxy` -> http://localhost:4300), para probar un cambio
+ * antes de desplegarlo. Los datos y el back siguen siendo los de TEST_ENV.
+ */
+const baseURL =
+    (process.env.PAREX_BASE_URL ?? environment.baseURL).replace(/\/$/, '');
 
 const parexRoot =
     __dirname;
@@ -61,7 +71,11 @@ console.log(
     ` Ambiente : ${environment.name.toUpperCase()}`
 );
 console.log(
-    ` URL      : ${environment.baseURL}`
+    ` URL      : ${baseURL}${
+        process.env.PAREX_BASE_URL
+            ? '  (PAREX_BASE_URL)'
+            : ''
+    }`
 );
 console.log(
     '=========================================='
@@ -98,8 +112,7 @@ export default defineConfig({
     },
 
     use: {
-        baseURL:
-            environment.baseURL,
+        baseURL,
 
         trace:
             'retain-on-failure',

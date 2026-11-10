@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 
 import {
     test,
@@ -7,57 +6,40 @@ import {
 } from '@playwright/test';
 
 import {
-    prepareSigningCeremony,
+    prepareSigningAtIdentityScreen,
     readFixtureBase64,
 } from '../../support/signing/signing-e2e';
 
-test.setTimeout(180_000);
+import {
+    requireSigningE2EInputs,
+} from '../../support/signing/signing-test-env';
+
+test.setTimeout(300_000);
 
 test(
     'EUV-UC3-006 · validar la identidad del inversionista durante la firma',
     async ({ page }, testInfo) => {
-        testInfo.annotations.push({
-            type: 'known_issue',
-            description:
-                'DEF-UC3-SIGN-001',
-        });
-
-        testInfo.annotations.push({
-            type: 'workaround',
-            description:
-                'Reload en etapa Signature antes de iniciar la ceremonia.',
-        });
-
-        const facePath =
-            process.env
-                .SIGNATURES_TEST_FACE_PATH;
-
-        if (
-            !facePath ||
-            !fs.existsSync(
-                path.resolve(facePath)
-            )
-        ) {
-            testInfo.annotations.push({
-                type: 'blocked',
-                description:
-                    'SIGNATURES_TEST_FACE_PATH no está configurado o no existe.',
-            });
-
-            test.skip(
-                true,
-                'Se necesita una fixture facial local para validar Rekognition.'
+        const {
+            facePath,
+            signerEmail,
+        } =
+            requireSigningE2EInputs(
+                testInfo
             );
-        }
 
-        let signId = '';
-
+        /*
+         * PREPARACIÓN: revisión del documento -> correo del firmante y
+         * aceptación de términos (FORM -> BIOMETRICS). El backend ya no
+         * tiene una etapa de consentimiento aparte: los términos se
+         * aceptan junto con el correo, antes de la identidad.
+         */
         const preparation =
             await test.step(
-                'PREPARACIÓN · existe una ceremonia de firma en revisión con el hook E2E habilitado',
+                'PREPARACIÓN · existe una ceremonia de firma en validación de identidad con el hook E2E habilitado',
                 async () => {
-                    return await prepareSigningCeremony(
-                        page
+                    return await prepareSigningAtIdentityScreen(
+                        page,
+                        signerEmail
                     );
                 }
             );
@@ -67,8 +49,8 @@ test(
             driver,
         } = preparation;
 
-        signId =
-            context.signId;
+        const signatureId =
+            context.signatureId;
 
         const idFront =
             readFixtureBase64(
@@ -82,9 +64,7 @@ test(
 
         const face =
             fs
-                .readFileSync(
-                    path.resolve(facePath!)
-                )
+                .readFileSync(facePath)
                 .toString('base64');
 
         await test.step(
@@ -93,43 +73,23 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.signId
-                ).toBe(signId);
-
-                expect(
-                    state.screen
-                ).toBe('review');
-
-                expect(
-                    state.error
-                ).toBe('');
-
-                expect(
-                    state.uploads
-                ).not.toBeNull();
+                expect(state.signatureId).toBe(signatureId);
+                expect(state.screen).toBe('identity');
+                expect(state.stage).toBe('BIOMETRICS');
+                expect(state.error).toBe('');
+                expect(state.biometrics).toEqual({
+                    ID_FRONT: false,
+                    ID_BACK: false,
+                    FACE: false,
+                });
             }
         );
 
         await test.step(
-            'CUANDO el inversionista continúa a la validación de identidad',
-            async () => {
-                await driver.goToIdentity();
-
-                const state =
-                    await driver.state();
-
-                expect(
-                    state.screen
-                ).toBe('identity');
-            }
-        );
-
-        await test.step(
-            'Y presenta el frente de su documento',
+            'CUANDO presenta el frente de su documento',
             async () => {
                 await driver.submitEvidence(
-                    'id_front',
+                    'ID_FRONT',
                     idFront,
                     'image/png'
                 );
@@ -137,19 +97,8 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.uploads
-                        ?.id_front.uploaded
-                ).toBe(true);
-
-                expect(
-                    state.uploads
-                        ?.id_front.validated
-                ).toBe(true);
-
-                expect(
-                    state.error
-                ).toBe('');
+                expect(state.biometrics?.ID_FRONT).toBe(true);
+                expect(state.error).toBe('');
             }
         );
 
@@ -157,7 +106,7 @@ test(
             'Y presenta el reverso de su documento',
             async () => {
                 await driver.submitEvidence(
-                    'id_back',
+                    'ID_BACK',
                     idBack,
                     'image/png'
                 );
@@ -165,19 +114,8 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.uploads
-                        ?.id_back.uploaded
-                ).toBe(true);
-
-                expect(
-                    state.uploads
-                        ?.id_back.validated
-                ).toBe(true);
-
-                expect(
-                    state.error
-                ).toBe('');
+                expect(state.biometrics?.ID_BACK).toBe(true);
+                expect(state.error).toBe('');
             }
         );
 
@@ -185,7 +123,7 @@ test(
             'Y presenta la evidencia facial requerida',
             async () => {
                 await driver.submitEvidence(
-                    'face',
+                    'FACE',
                     face,
                     'image/jpeg'
                 );
@@ -203,47 +141,19 @@ test(
                 const state =
                     await driver.state();
 
-                expect(
-                    state.uploads
-                        ?.id_front.uploaded
-                ).toBe(true);
+                expect(state.biometrics).toEqual({
+                    ID_FRONT: true,
+                    ID_BACK: true,
+                    FACE: true,
+                });
+                expect(state.screen).toBe('signature');
+                expect(state.stage).toBe('SIGNATURE');
+                expect(state.error).toBe('');
+                expect(state.signatureId).toBe(signatureId);
 
-                expect(
-                    state.uploads
-                        ?.id_front.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads
-                        ?.id_back.uploaded
-                ).toBe(true);
-
-                expect(
-                    state.uploads
-                        ?.id_back.validated
-                ).toBe(true);
-
-                expect(
-                    state.uploads
-                        ?.face.uploaded
-                ).toBe(true);
-
-                expect(
-                    state.uploads
-                        ?.face.validated
-                ).toBe(true);
-
-                expect(
-                    state.screen
-                ).toBe('signature');
-
-                expect(
-                    state.error
-                ).toBe('');
-
-                expect(
-                    state.signId
-                ).toBe(signId);
+                await expect(
+                    page.locator('#signing-screen-signature')
+                ).toBeVisible();
             }
         );
 
@@ -266,7 +176,7 @@ test(
                             processId:
                                 context.processId,
 
-                            signId,
+                            signatureId,
 
                             resultingScreen:
                                 finalState.screen,
@@ -274,11 +184,8 @@ test(
                             resultingStage:
                                 finalState.stage,
 
-                            uploads:
-                                finalState.uploads,
-
-                            knownIssue:
-                                'DEF-UC3-SIGN-001',
+                            biometrics:
+                                finalState.biometrics,
 
                             finalUrl:
                                 page.url(),

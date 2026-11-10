@@ -1,5 +1,10 @@
 import { expect, type Page } from '@playwright/test';
 
+import {
+    pickFixedOption,
+    pickSearchOption,
+} from './form-controls';
+
 export const DEFAULT_UC3_AMOUNT = '89000000';
 export const DEFAULT_UC3_TERM_DAYS = 540;
 
@@ -13,26 +18,59 @@ export interface ProcessContext extends SimulatorOfferContext {
     processId: string;
 }
 
-export interface SyntheticDeclaration {
+export interface SyntheticDocument {
     name: string;
     mimeType: 'image/png';
     buffer: Buffer;
 }
 
+/** Documento requerido tal como lo pinta el portal (`process-documents-row-<slug>`). */
+export interface RequiredDocument {
+    fileType: string;
+    slug: string;
+}
+
+export interface UploadedDocument extends RequiredDocument {
+    name: string;
+}
+
+/**
+ * Formulario KYC del servicio `forms` (backend docs/forms-api.md §3.1).
+ *
+ * Los países, departamentos y ciudades son CLAVES del catálogo
+ * (`GET /forms/get-locations`), no etiquetas.
+ */
 export interface ProcessFormData {
-    fullName: string;
+    name: string;
+    secondName: string;
+    lastName: string;
+    secondLastName: string;
+    gender: 'M' | 'F' | 'O';
     birthDate: string;
+    nationality: string;
+    civilStatus: string;
+    educationLevel: string;
+    birthCountry: string;
+    birthDepartment: string;
+    birthCity: string;
+    documentType: 'CC' | 'CE' | 'TI' | 'PA';
     documentNumber: string;
-    phone: string;
-    city: string;
-    address: string;
-    occupation: string;
-    economicActivity: string;
+    documentIssuanceDate: string;
+    documentIssuanceCountry: string;
+    documentIssuanceDepartment: string;
+    documentIssuanceCity: string;
+    email: string;
+    /** País del indicativo (ISO 3166-1 alfa-2), p. ej. `CO`. El campo es un selector con banderas. */
+    phoneCountry: string;
+    /** Indicativo de ese país, sin `+`: es lo que se escribe para buscarlo y lo que el back recibe. */
+    phoneDial: string;
+    phoneNumber: string;
     monthlyIncome: string;
     monthlyExpenses: string;
     totalAssets: string;
     totalLiabilities: string;
-    sourceOfFunds: string;
+    isTaxDeclarant: boolean;
+    isPep: boolean;
 }
 
 /**
@@ -110,7 +148,7 @@ export async function prepareSimulatorOffer(
     const simulationResponsePromise =
         page.waitForResponse(
             (response) =>
-                response.request().method() === 'POST' &&
+                response.request().method() === 'GET' &&
                 response.url().includes('/banks/simulate'),
             {
                 timeout: 60_000,
@@ -129,7 +167,7 @@ export async function prepareSimulatorOffer(
 
     console.log(
         [
-            '[PAREX] POST /banks/simulate',
+            '[PAREX] GET /banks/simulate',
             `status=${simulationResponse.status()}`,
             `body=${simulationBody.slice(0, 1000)}`,
         ].join(' · ')
@@ -152,26 +190,27 @@ export async function prepareSimulatorOffer(
     } catch {
         throw new Error(
             [
-                'POST /banks/simulate respondió 2xx',
+                'GET /banks/simulate respondió 2xx',
                 'pero el body no es JSON válido',
                 `body=${simulationBody.slice(0, 500)}`,
             ].join(' · ')
         );
     }
 
+    /*
+     * Contrato: `banks` es un OBJETO indexado por el id del banco,
+     * no un array (backend docs/banks-api.md §3.3).
+     */
+    const banks =
+        (simulationPayload as { banks?: unknown } | null)?.banks;
+
     expect(
-        simulationPayload !== null &&
-        typeof simulationPayload === 'object' &&
-        Array.isArray(
-            (
-                simulationPayload as {
-                    results?: unknown;
-                }
-            ).results
-        ),
+        banks !== null &&
+        typeof banks === 'object' &&
+        !Array.isArray(banks),
         [
-            'POST /banks/simulate respondió 2xx',
-            'pero no cumple el contrato esperado { results: [] }',
+            'GET /banks/simulate respondió 2xx',
+            'pero no cumple el contrato esperado { banks: { <id>: {...} } }',
             `body=${simulationBody.slice(0, 500)}`,
         ].join(' · ')
     ).toBeTruthy();
@@ -337,7 +376,7 @@ export async function createProcessAtFormStage(
         page.waitForURL(
             /\/portal\/process\/[^/?#]+/,
             {
-                timeout: 15_000,
+                timeout: 30_000,
             }
         ),
 
@@ -376,7 +415,9 @@ export async function createProcessAtFormStage(
 
     await expect(
         page.locator('#process-form')
-    ).toBeVisible();
+    ).toBeVisible({
+        timeout: 20_000,
+    });
 
     return {
         ...simulatorContext,
@@ -387,48 +428,47 @@ export async function createProcessAtFormStage(
 /**
  * Genera datos sintéticos para el formulario.
  *
- * No utiliza información personal real.
+ * No utiliza información personal real. Las ubicaciones son claves
+ * reales del catálogo (`QUINDIO/ARMENIA`, `CUNDINAMARCA/USAQUEN`, esta
+ * última una localidad de Bogotá, válida como ciudad de expedición).
+ *
+ * `isTaxDeclarant: true` hace que el proceso exija, además de la
+ * certificación bancaria, la declaración de renta: así UC3-003 cubre un
+ * requisito condicional.
  */
 export function buildSyntheticProcessFormData(): ProcessFormData {
     return {
-        fullName:
-            'Usuario PAREX E2E',
-
-        birthDate:
-            '1999-11-02',
-
-        documentNumber:
-            String(Date.now()).slice(-10),
-
-        phone:
-            '3001234567',
-
-        city:
-            'Bogota',
-
-        address:
-            'Calle de prueba PAREX 123',
-
-        occupation:
-            'Ingeniero',
-
-        economicActivity:
-            'Empleado',
-
-        monthlyIncome:
-            '12000000',
-
-        monthlyExpenses:
-            '5000000',
-
-        totalAssets:
-            '20000000',
-
-        totalLiabilities:
-            '1000000',
-
-        sourceOfFunds:
-            'Salario',
+        name: 'Usuario',
+        secondName: 'Parex',
+        lastName: 'Prueba',
+        secondLastName: 'Automatizada',
+        gender: 'O',
+        birthDate: '1999-11-02',
+        nationality: 'COLOMBIA',
+        civilStatus: 'SINGLE',
+        educationLevel: 'PROFESSIONAL',
+        birthCountry: 'COLOMBIA',
+        birthDepartment: 'QUINDIO',
+        birthCity: 'ARMENIA',
+        documentType: 'CC',
+        documentNumber: String(Date.now()).slice(-10),
+        documentIssuanceDate: '2017-11-10',
+        documentIssuanceCountry: 'COLOMBIA',
+        documentIssuanceDepartment: 'CUNDINAMARCA',
+        documentIssuanceCity: 'USAQUEN',
+        email:
+            process.env.SIGNATURES_TEST_EMAIL ??
+            process.env.TEST_USER_EMAIL ??
+            'parex@example.com',
+        phoneCountry: 'CO',
+        phoneDial: '57',
+        phoneNumber: '3001234567',
+        monthlyIncome: '12000000',
+        monthlyExpenses: '5000000',
+        totalAssets: '20000000',
+        totalLiabilities: '1000000',
+        isTaxDeclarant: true,
+        isPep: false,
     };
 }
 
@@ -438,6 +478,16 @@ export function buildSyntheticProcessFormData(): ProcessFormData {
  * Esta separación es intencional:
  * EUV-UC3-002 necesita ejecutar explícitamente el submit
  * porque ese estímulo forma parte del comportamiento evaluado.
+ *
+ * El usuario PAREX puede traer un formulario de una corrida anterior
+ * (el formulario es uno por usuario), así que se sobrescribe todo.
+ * Los selectores en cascada se llenan en orden país -> departamento ->
+ * ciudad: cambiar el padre limpia a los hijos.
+ *
+ * Los selectores son controles propios (no `<select>` nativos): ver
+ * `form-controls.ts`. Las fechas aceptan el formato ISO (`1999-11-02`),
+ * que el campo convierte a `dd/mm/aaaa`; los montos aceptan solo dígitos
+ * y el campo les pone los puntos de miles.
  */
 export async function fillProcessFormFields(
     page: Page,
@@ -448,57 +498,56 @@ export async function fillProcessFormFields(
         page.locator('#process-form')
     ).toBeVisible();
 
-    await page
-        .locator('#process-form-full-name')
-        .fill(data.fullName);
+    const fill = (id: string, value: string) =>
+        page.locator(`#${id}`).fill(value);
 
-    await page
-        .locator('#process-form-birth-date')
-        .fill(data.birthDate);
+    const fixed = (id: string, key: string) =>
+        pickFixedOption(page, id, key);
 
-    await page
-        .locator('#process-form-document-number')
-        .fill(data.documentNumber);
+    const search = (id: string, key: string) =>
+        pickSearchOption(page, id, key);
 
-    await page
-        .locator('#process-form-phone')
-        .fill(data.phone);
+    // Información personal
+    await fill('process-form-name', data.name);
+    await fill('process-form-second-name', data.secondName);
+    await fill('process-form-last-name', data.lastName);
+    await fill('process-form-second-last-name', data.secondLastName);
+    await fixed('process-form-gender', data.gender);
+    await fill('process-form-birth-date', data.birthDate);
+    await search('process-form-nationality', data.nationality);
+    await fixed('process-form-civil-status', data.civilStatus);
+    await fixed('process-form-education-level', data.educationLevel);
 
-    await page
-        .locator('#process-form-city')
-        .fill(data.city);
+    // Lugar de nacimiento
+    await search('process-form-birth-country', data.birthCountry);
+    await search('process-form-birth-department', data.birthDepartment);
+    await search('process-form-birth-city', data.birthCity);
 
-    await page
-        .locator('#process-form-address')
-        .fill(data.address);
+    // Documento
+    await fixed('process-form-document-type', data.documentType);
+    await fill('process-form-document-number', data.documentNumber);
+    await fill('process-form-document-issuance-date', data.documentIssuanceDate);
+    await search('process-form-document-issuance-country', data.documentIssuanceCountry);
+    await search('process-form-document-issuance-department', data.documentIssuanceDepartment);
+    await search('process-form-document-issuance-city', data.documentIssuanceCity);
 
-    await page
-        .locator('#process-form-occupation')
-        .fill(data.occupation);
+    // Contacto
+    await fill('process-form-email', data.email);
+    await pickSearchOption(
+        page,
+        'process-form-phone-ext',
+        data.phoneCountry,
+        `+${data.phoneDial}`
+    );
+    await fill('process-form-phone', data.phoneNumber);
 
-    await page
-        .locator('#process-form-economic-activity')
-        .fill(data.economicActivity);
-
-    await page
-        .locator('#process-form-monthly-income')
-        .fill(data.monthlyIncome);
-
-    await page
-        .locator('#process-form-monthly-expenses')
-        .fill(data.monthlyExpenses);
-
-    await page
-        .locator('#process-form-total-assets')
-        .fill(data.totalAssets);
-
-    await page
-        .locator('#process-form-total-liabilities')
-        .fill(data.totalLiabilities);
-
-    await page
-        .locator('#process-form-source-of-funds')
-        .fill(data.sourceOfFunds);
+    // Perfil financiero
+    await fill('process-form-monthly-income', data.monthlyIncome);
+    await fill('process-form-monthly-expenses', data.monthlyExpenses);
+    await fill('process-form-total-assets', data.totalAssets);
+    await fill('process-form-total-liabilities', data.totalLiabilities);
+    await page.locator('#process-form-is-tax-declarant').setChecked(data.isTaxDeclarant);
+    await page.locator('#process-form-is-pep').setChecked(data.isPep);
 
     return data;
 }
@@ -524,12 +573,13 @@ export async function completeProcessForm(
 
     /*
      * Oráculo de preparación:
-     * debemos haber abandonado Formulario.
+     * debemos haber abandonado Formulario
+     * (upsert-form + set-process-form).
      */
     await expect(
         page.locator('#process-stage-documents')
     ).toBeVisible({
-        timeout: 15_000,
+        timeout: 30_000,
     });
 
     await expect(
@@ -544,20 +594,44 @@ export async function completeProcessForm(
 }
 
 /**
- * Construye una declaración completamente sintética.
+ * Documentos que el proceso exige, según los pinta el portal a partir
+ * de `GET /processes/get-required-files`.
+ */
+export async function readRequiredDocuments(
+    page: Page
+): Promise<RequiredDocument[]> {
+    await expect(
+        page.locator('#process-documents-list')
+    ).toBeVisible({
+        timeout: 20_000,
+    });
+
+    return await page
+        .locator('[id^="process-documents-row-"]')
+        .evaluateAll((rows) =>
+            rows.map((row) => ({
+                fileType: row.getAttribute('data-file-type') ?? '',
+                slug: row.id.replace('process-documents-row-', ''),
+            }))
+        );
+}
+
+/**
+ * Construye un documento completamente sintético.
  *
  * Es un PNG válido de 1x1 pixel.
  *
  * No usa:
- * - declaraciones reales
- * - cédulas
+ * - documentos reales
  * - datos personales
  * - biometría
  */
-export function buildSyntheticDeclaration(): SyntheticDeclaration {
+export function buildSyntheticDocument(
+    slug = 'documento'
+): SyntheticDocument {
     return {
         name:
-            `declaracion-renta-parex-${Date.now()}.png`,
+            `${slug}-parex-${Date.now()}.png`,
 
         mimeType:
             'image/png',
@@ -570,32 +644,18 @@ export function buildSyntheticDeclaration(): SyntheticDeclaration {
 }
 
 /**
- * Registra una declaración sintética y espera hasta que
- * el backend la exponga nuevamente como FileRow.
- *
- * Esta función se usa como PREPARACIÓN para EUV posteriores
- * a UC3-003.
- *
- * EUV-UC3-003 NO debe usar esta función, porque el upload
- * es precisamente el comportamiento que dicho EUV valida.
+ * Adjunta un documento sintético a la caja `slug` y espera hasta que
+ * el backend lo registre (on_upload) y el portal lo presente como cargado.
  */
-export async function uploadSyntheticDeclaration(
+export async function uploadSyntheticDocument(
     page: Page,
-    declaration:
-        SyntheticDeclaration =
-        buildSyntheticDeclaration()
-): Promise<SyntheticDeclaration> {
-    await expect(
-        page.locator('#process-stage-documents')
-    ).toBeVisible();
-
-    await expect(
-        page.locator('#process-documents-input')
-    ).toHaveCount(1);
-
+    slug: string,
+    document: SyntheticDocument =
+        buildSyntheticDocument(slug)
+): Promise<SyntheticDocument> {
     await page
-        .locator('#process-documents-input')
-        .setInputFiles(declaration);
+        .locator(`#process-documents-input-${slug}`)
+        .setInputFiles(document);
 
     /*
      * No consideramos PASS simplemente porque el input
@@ -605,26 +665,70 @@ export async function uploadSyntheticDeclaration(
      * y el componente lo vuelva a presentar.
      */
     await expect(
-        page.locator('#process-documents-file')
+        page.locator(`#process-documents-file-${slug}`)
     ).toBeVisible({
-        timeout: 40_000,
+        timeout: 45_000,
     });
 
     await expect(
-        page.locator('#process-documents-file')
+        page.locator(`#process-documents-file-${slug}`)
     ).toContainText(
-        declaration.name
+        document.name
     );
 
     await expect(
-        page.locator('#process-documents-view')
-    ).toBeVisible();
-
-    await expect(
-        page.locator('#process-documents-error')
+        page.locator(`#process-documents-error-${slug}`)
     ).toHaveCount(0);
 
-    return declaration;
+    return document;
+}
+
+/**
+ * Registra todos los documentos requeridos y espera a que el
+ * portal los marque como completos.
+ *
+ * Se usa como PREPARACIÓN para EUV posteriores a UC3-003.
+ *
+ * EUV-UC3-003 NO debe usar esta función, porque el upload
+ * es precisamente el comportamiento que dicho EUV valida.
+ */
+export async function uploadRequiredDocuments(
+    page: Page
+): Promise<UploadedDocument[]> {
+    await expect(
+        page.locator('#process-stage-documents')
+    ).toBeVisible();
+
+    const required =
+        await readRequiredDocuments(page);
+
+    expect(
+        required.length,
+        'el proceso debe exigir al menos un documento'
+    ).toBeGreaterThan(0);
+
+    const uploaded: UploadedDocument[] = [];
+
+    for (const doc of required) {
+        const file =
+            await uploadSyntheticDocument(
+                page,
+                doc.slug
+            );
+
+        uploaded.push({
+            ...doc,
+            name: file.name,
+        });
+    }
+
+    await expect(
+        page.locator('#process-documents-complete')
+    ).toBeVisible({
+        timeout: 20_000,
+    });
+
+    return uploaded;
 }
 
 /**
@@ -654,20 +758,18 @@ export async function prepareProcessAtSignatureStage(
     await completeProcessForm(page);
 
     /*
-     * Registrar declaración sintética.
+     * Registrar los documentos requeridos.
      */
-    await uploadSyntheticDeclaration(page);
+    await uploadRequiredDocuments(page);
 
     /*
      * Documentos -> Signature.
      *
      * Esta transición ya fue demostrada por EUV-UC3-004,
      * por eso aquí funciona únicamente como preparación.
+     * generate_sign llena la orden de inversión y abre la firma
+     * en segundo plano: puede tardar varios segundos.
      */
-    await expect(
-        page.locator('#process-advance-documents')
-    ).toBeVisible();
-
     await expect(
         page.locator('#process-advance-documents')
     ).toBeEnabled();
@@ -679,7 +781,7 @@ export async function prepareProcessAtSignatureStage(
     await expect(
         page.locator('#process-stage-signature')
     ).toBeVisible({
-        timeout: 15_000,
+        timeout: 120_000,
     });
 
     await expect(
@@ -690,32 +792,11 @@ export async function prepareProcessAtSignatureStage(
         page.locator('#process-error')
     ).toHaveCount(0);
 
-    /*
-     * WORKAROUND TEMPORAL - defecto conocido del flujo de firma.
-     *
-     * Después de Documents -> Signature, el portal actualiza el
-     * process en memoria pero la información de la ceremonia
-     * (detail.signature) puede no quedar hidratada inmediatamente.
-     *
-     * Una recarga vuelve a consultar el detalle completo del proceso.
-     *
-     * Este reload NO forma parte del comportamiento evaluado por
-     * EUV-UC3-005. Es una precondición temporal para poder continuar
-     * validando el Signing SPA mientras se corrige el producto.
-     */
-    await page.reload({
-        waitUntil: 'domcontentloaded',
-    });
-
     await expect(
-        page.locator('#process-stage-signature')
+        page.locator('#process-signature-start')
     ).toBeVisible({
         timeout: 15_000,
     });
-
-    await expect(
-        page.locator('#process-signature-start')
-    ).toBeVisible();
 
     await expect(
         page.locator('#process-signature-start')

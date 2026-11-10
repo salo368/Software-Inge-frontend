@@ -69,7 +69,7 @@ test(
                     page.waitForURL(
                         /\/portal\/process\/[^/?#]+/,
                         {
-                            timeout: 15_000,
+                            timeout: 30_000,
                         }
                     ),
 
@@ -113,7 +113,16 @@ test(
 
                 await expect(
                     page.locator('#process-form')
-                ).toBeVisible();
+                ).toBeVisible({
+                    timeout: 20_000,
+                });
+
+                await expect(
+                    page.locator('#process-header')
+                ).toHaveAttribute(
+                    'data-stage',
+                    'FORM'
+                );
 
                 /*
                  * La sesión continúa activa.
@@ -159,7 +168,7 @@ test(
                             processId,
 
                             resultingStage:
-                                'form',
+                                'FORM',
 
                             finalUrl:
                                 page.url(),
